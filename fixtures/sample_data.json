@@ -1,0 +1,266 @@
+[
+  {
+    "model": "projects.project",
+    "pk": 1,
+    "fields": {
+      "name": "Call Center Analytics",
+      "description": "Intent classification and sentiment analysis for customer service calls",
+      "created_by": 1,
+      "is_active": true
+    }
+  },
+  {
+    "model": "agents.agent",
+    "pk": 1,
+    "fields": {
+      "name": "Intent Classifier Agent",
+      "description": "Classifies customer intent from call transcripts using predefined categories",
+      "return_type": "structured",
+      "schema_definition": {
+        "type": "object",
+        "properties": {
+          "intent": {"type": "string", "enum": ["complaint", "inquiry", "compliment", "refund_request", "technical_support"]},
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+          "reasoning": {"type": "string"}
+        },
+        "required": ["intent", "confidence"]
+      },
+      "project": 1,
+      "created_by": 1,
+      "is_active": true
+    }
+  },
+  {
+    "model": "agents.prompt",
+    "pk": 1,
+    "fields": {
+      "agent": 1,
+      "prompt_type": "system",
+      "content": "You are an expert at analyzing customer service calls. Your task is to classify the customer's intent based on the call transcript. Available categories: {categories}. Always respond with structured JSON containing the intent, confidence score (0-1), and reasoning for your classification.",
+      "placeholders": {
+        "categories": "List of available intent categories (complaint, inquiry, compliment, refund_request, technical_support)"
+      },
+      "created_by": 1,
+      "is_active": true
+    }
+  },
+  {
+    "model": "agents.prompt",
+    "pk": 2,
+    "fields": {
+      "agent": 1,
+      "prompt_type": "user",
+      "content": "Analyze this call transcript and classify the customer intent:\n\nCall Details:\n- Call ID: {call_id}\n- Duration: {duration} minutes\n- Customer Phone: {phone}\n- Account ID: {account_id}\n\nCall Transcript:\n{transcript}\n\nPlease classify the customer's primary intent and provide your confidence level.",
+      "placeholders": {
+        "call_id": "Unique call identifier",
+        "duration": "Call duration in minutes",
+        "phone": "Customer phone number",
+        "account_id": "Customer account ID",
+        "transcript": "Full call transcript text"
+      },
+      "created_by": 1,
+      "is_active": true
+    }
+  },
+  {
+    "model": "agents.tool",
+    "pk": 1,
+    "fields": {
+      "name": "OpenAI GPT-4",
+      "description": "OpenAI GPT-4 language model for text analysis",
+      "tool_type": "llm",
+      "configuration": {
+        "model": "gpt-4",
+        "temperature": 0.1,
+        "max_tokens": 500
+      },
+      "created_by": 1,
+      "is_active": true
+    }
+  },
+  {
+    "model": "agents.agenttool",
+    "pk": 1,
+    "fields": {
+      "agent": 1,
+      "tool": 1,
+      "configuration": {
+        "primary": true,
+        "fallback_model": "gpt-3.5-turbo"
+      },
+      "created_by": 1,
+      "is_active": true
+    }
+  },
+  {
+    "model": "workflows.datasource",
+    "pk": 1,
+    "fields": {
+      "name": "Call Transcripts Database",
+      "source_type": "database",
+      "connection_config": {
+        "host": "localhost",
+        "database": "call_center_db",
+        "table": "call_transcripts"
+      },
+      "load_mode": "incremental",
+      "table_name": "call_transcripts",
+      "created_by": 1,
+      "is_active": true
+    }
+  },
+  {
+    "model": "workflows.workflow",
+    "pk": 1,
+    "fields": {
+      "name": "Daily Intent Analysis Workflow",
+      "description": "Process daily call transcripts through intent classification agent",
+      "project": 1,
+      "configuration": {
+        "schedule": "daily",
+        "batch_size": 100,
+        "retry_attempts": 3
+      },
+      "status": "active",
+      "created_by": 1,
+      "is_active": true
+    }
+  },
+  {
+    "model": "workflows.workflownode",
+    "pk": 1,
+    "fields": {
+      "workflow": 1,
+      "node_type": "input",
+      "position": 1,
+      "configuration": {
+        "query": "SELECT * FROM call_transcripts WHERE created_at >= {watermark_start} AND created_at < {watermark_end}"
+      },
+      "data_source": 1,
+      "created_by": 1,
+      "is_active": true
+    }
+  },
+  {
+    "model": "workflows.workflownode",
+    "pk": 2,
+    "fields": {
+      "workflow": 1,
+      "node_type": "agent",
+      "position": 2,
+      "configuration": {
+        "batch_processing": true,
+        "parallel_execution": 5
+      },
+      "agent": 1,
+      "created_by": 1,
+      "is_active": true
+    }
+  },
+  {
+    "model": "workflows.workflownode",
+    "pk": 3,
+    "fields": {
+      "workflow": 1,
+      "node_type": "output",
+      "position": 3,
+      "configuration": {
+        "table": "intent_analysis_results",
+        "upsert": true
+      },
+      "created_by": 1,
+      "is_active": true
+    }
+  },
+  {
+    "model": "workflows.placeholdermapping",
+    "pk": 1,
+    "fields": {
+      "workflow_node": 2,
+      "placeholder_name": "call_id",
+      "data_column": "id",
+      "transformation": "",
+      "created_by": 1,
+      "is_active": true
+    }
+  },
+  {
+    "model": "workflows.placeholdermapping",
+    "pk": 2,
+    "fields": {
+      "workflow_node": 2,
+      "placeholder_name": "duration",
+      "data_column": "call_duration_minutes",
+      "transformation": "",
+      "created_by": 1,
+      "is_active": true
+    }
+  },
+  {
+    "model": "workflows.placeholdermapping",
+    "pk": 3,
+    "fields": {
+      "workflow_node": 2,
+      "placeholder_name": "phone",
+      "data_column": "customer_phone",
+      "transformation": "",
+      "created_by": 1,
+      "is_active": true
+    }
+  },
+  {
+    "model": "workflows.placeholdermapping",
+    "pk": 4,
+    "fields": {
+      "workflow_node": 2,
+      "placeholder_name": "account_id",
+      "data_column": "customer_account_id",
+      "transformation": "",
+      "created_by": 1,
+      "is_active": true
+    }
+  },
+  {
+    "model": "workflows.placeholdermapping",
+    "pk": 5,
+    "fields": {
+      "workflow_node": 2,
+      "placeholder_name": "transcript",
+      "data_column": "transcript_text",
+      "transformation": "",
+      "created_by": 1,
+      "is_active": true
+    }
+  },
+  {
+    "model": "workflows.placeholdermapping",
+    "pk": 6,
+    "fields": {
+      "workflow_node": 2,
+      "placeholder_name": "categories",
+      "data_column": "",
+      "transformation": "static:complaint,inquiry,compliment,refund_request,technical_support",
+      "created_by": 1,
+      "is_active": true
+    }
+  },
+  {
+    "model": "workflows.outputnode",
+    "pk": 1,
+    "fields": {
+      "workflow": 1,
+      "destination_table": "intent_analysis_results",
+      "configuration": {
+        "columns": {
+          "call_id": "source.id",
+          "intent": "result.intent",
+          "confidence": "result.confidence",
+          "reasoning": "result.reasoning",
+          "processed_at": "timestamp"
+        }
+      },
+      "created_by": 1,
+      "is_active": true
+    }
+  }
+]
