@@ -2,6 +2,8 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { api } from '../lib/api';
 import type { User, LoginRequest } from '../lib/types';
 
+
+
 interface AuthContextType {
   user: User | null;
   loading: boolean;
