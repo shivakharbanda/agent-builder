@@ -97,12 +97,13 @@ class CredentialSerializer(serializers.ModelSerializer):
 class CredentialListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for credential lists"""
     credential_type_name = serializers.CharField(source='credential_type.type_name', read_only=True)
+    credential_type_category = serializers.CharField(source='credential_type.category.name', read_only=True)
     details_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Credential
         fields = [
-            'id', 'name', 'description', 'credential_type_name',
+            'id', 'name', 'description', 'credential_type_name', 'credential_type_category',
             'details_count', 'created_at', 'is_active'
         ]
 

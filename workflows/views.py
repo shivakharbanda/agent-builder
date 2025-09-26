@@ -2,9 +2,9 @@ from rest_framework import viewsets, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
-from .models import DataSource, Workflow, WorkflowNode, PlaceholderMapping, OutputNode
+from .models import DataSource, Workflow, WorkflowProperties, WorkflowExecution, WorkflowNode, PlaceholderMapping, OutputNode
 from .serializers import (
-    DataSourceSerializer, WorkflowSerializer, WorkflowListSerializer,
+    DataSourceSerializer, WorkflowSerializer, WorkflowListSerializer, WorkflowPropertiesSerializer, WorkflowExecutionSerializer,
     WorkflowNodeSerializer, PlaceholderMappingSerializer, OutputNodeSerializer
 )
 
@@ -23,7 +23,7 @@ class WorkflowViewSet(viewsets.ModelViewSet):
     queryset = Workflow.objects.filter(is_active=True)
     serializer_class = WorkflowSerializer
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['project', 'status', 'is_active']
+    filterset_fields = ['project', 'is_active']
     search_fields = ['name', 'description']
     ordering_fields = ['name', 'created_at']
     ordering = ['-created_at']
@@ -40,6 +40,45 @@ class WorkflowViewSet(viewsets.ModelViewSet):
         nodes = WorkflowNode.objects.filter(workflow=workflow, is_active=True).order_by('position')
         serializer = WorkflowNodeSerializer(nodes, many=True)
         return Response(serializer.data)
+
+    @action(detail=True, methods=['get', 'put'])
+    def properties(self, request, pk=None):
+        """Get or update workflow properties"""
+        workflow = self.get_object()
+
+        # Get or create properties object
+        properties, created = WorkflowProperties.objects.get_or_create(
+            workflow=workflow,
+            defaults={'created_by': request.user}
+        )
+
+        if request.method == 'GET':
+            serializer = WorkflowPropertiesSerializer(properties)
+            return Response(serializer.data)
+
+        elif request.method == 'PUT':
+            serializer = WorkflowPropertiesSerializer(properties, data=request.data, partial=True)
+            if serializer.is_valid():
+                serializer.save()
+                return Response(serializer.data)
+            return Response(serializer.errors, status=400)
+
+    @action(detail=True, methods=['get', 'post'])
+    def executions(self, request, pk=None):
+        """Get workflow executions or create a new execution"""
+        workflow = self.get_object()
+
+        if request.method == 'GET':
+            executions = workflow.executions.all()
+            serializer = WorkflowExecutionSerializer(executions, many=True)
+            return Response(serializer.data)
+
+        elif request.method == 'POST':
+            serializer = WorkflowExecutionSerializer(data=request.data)
+            if serializer.is_valid():
+                serializer.save(workflow=workflow, created_by=request.user)
+                return Response(serializer.data, status=201)
+            return Response(serializer.errors, status=400)
 
 
 class WorkflowNodeViewSet(viewsets.ModelViewSet):

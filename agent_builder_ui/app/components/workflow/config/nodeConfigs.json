@@ -1,0 +1,331 @@
+{
+  "database": {
+    "name": "Database",
+    "description": "Connects to your database to read data",
+    "icon": "storage",
+    "category": "data_source",
+    "fields": [
+      {
+        "name": "credential_id",
+        "type": "credential_select",
+        "label": "Database Connection",
+        "placeholder": "Select a database credential",
+        "required": true,
+        "category_filter": "RDBMS",
+        "help": "Choose the database connection to use for this node"
+      },
+      {
+        "name": "query",
+        "type": "textarea",
+        "label": "SQL Query",
+        "placeholder": "SELECT * FROM table WHERE column = {{placeholder}}",
+        "required": true,
+        "rows": 6,
+        "help": "Write your SQL query. Use {{placeholder}} for dynamic values that will be replaced at runtime"
+      },
+      {
+        "name": "placeholders",
+        "type": "placeholder_mapping",
+        "label": "Dynamic Placeholders",
+        "placeholder": "Map placeholder values",
+        "required": false,
+        "help": "Define the values for placeholders used in your query"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "data",
+        "type": "table",
+        "description": "Query results as table data"
+      }
+    ]
+  },
+  "agent": {
+    "name": "AI Agent",
+    "description": "Process data using an AI agent",
+    "icon": "smart_toy",
+    "category": "processor",
+    "fields": [
+      {
+        "name": "agent_id",
+        "type": "agent_select",
+        "label": "AI Agent",
+        "placeholder": "Select an AI agent",
+        "required": true,
+        "help": "Choose which AI agent will process the input data"
+      },
+      {
+        "name": "input_mapping",
+        "type": "input_mapping",
+        "label": "Input Data Mapping",
+        "placeholder": "Map input fields to agent inputs",
+        "required": false,
+        "help": "Define how input data should be mapped to the agent's expected inputs"
+      },
+      {
+        "name": "batch_size",
+        "type": "number",
+        "label": "Batch Size",
+        "placeholder": "100",
+        "required": false,
+        "min": 1,
+        "max": 1000,
+        "default": 100,
+        "help": "Number of records to process at once"
+      },
+      {
+        "name": "timeout",
+        "type": "number",
+        "label": "Timeout (seconds)",
+        "placeholder": "30",
+        "required": false,
+        "min": 5,
+        "max": 300,
+        "default": 30,
+        "help": "Maximum time to wait for agent response"
+      }
+    ],
+    "inputs": [
+      {
+        "name": "data",
+        "type": "any",
+        "description": "Input data to be processed by the agent"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "result",
+        "type": "any",
+        "description": "Processed data from the agent"
+      }
+    ]
+  },
+  "output": {
+    "name": "Output",
+    "description": "Save processed data to destination",
+    "icon": "output",
+    "category": "data_sink",
+    "fields": [
+      {
+        "name": "output_type",
+        "type": "select",
+        "label": "Output Type",
+        "placeholder": "Select output type",
+        "required": true,
+        "options": [
+          {"value": "database", "label": "Database Table"},
+          {"value": "file", "label": "File (CSV/JSON)"},
+          {"value": "api", "label": "API Endpoint"}
+        ],
+        "help": "Choose where to save the processed data"
+      },
+      {
+        "name": "credential_id",
+        "type": "credential_select",
+        "label": "Database Connection",
+        "placeholder": "Select a database credential",
+        "required": true,
+        "category_filter": "RDBMS",
+        "help": "Database connection for saving data",
+        "conditional": {
+          "field": "output_type",
+          "value": "database"
+        }
+      },
+      {
+        "name": "table_name",
+        "type": "text",
+        "label": "Table Name",
+        "placeholder": "output_table",
+        "required": true,
+        "help": "Name of the table to save data to",
+        "conditional": {
+          "field": "output_type",
+          "value": "database"
+        }
+      },
+      {
+        "name": "file_path",
+        "type": "text",
+        "label": "File Path",
+        "placeholder": "/path/to/output.csv",
+        "required": true,
+        "help": "Path where the file should be saved",
+        "conditional": {
+          "field": "output_type",
+          "value": "file"
+        }
+      },
+      {
+        "name": "file_format",
+        "type": "select",
+        "label": "File Format",
+        "placeholder": "Select format",
+        "required": true,
+        "options": [
+          {"value": "csv", "label": "CSV"},
+          {"value": "json", "label": "JSON"}
+        ],
+        "help": "Format for the output file",
+        "conditional": {
+          "field": "output_type",
+          "value": "file"
+        }
+      }
+    ],
+    "inputs": [
+      {
+        "name": "data",
+        "type": "any",
+        "description": "Data to be saved"
+      }
+    ]
+  },
+  "filter": {
+    "name": "Filter",
+    "description": "Filter and select data based on conditions",
+    "icon": "filter_alt",
+    "category": "processor",
+    "fields": [
+      {
+        "name": "conditions",
+        "type": "filter_conditions",
+        "label": "Filter Conditions",
+        "placeholder": "Add filter conditions",
+        "required": true,
+        "help": "Define conditions to filter the data"
+      },
+      {
+        "name": "operator",
+        "type": "select",
+        "label": "Condition Operator",
+        "placeholder": "AND",
+        "required": true,
+        "options": [
+          {"value": "AND", "label": "AND (all conditions must match)"},
+          {"value": "OR", "label": "OR (any condition can match)"}
+        ],
+        "default": "AND",
+        "help": "How to combine multiple conditions"
+      }
+    ],
+    "inputs": [
+      {
+        "name": "data",
+        "type": "table",
+        "description": "Input data to be filtered"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "data",
+        "type": "table",
+        "description": "Filtered data"
+      }
+    ]
+  },
+  "script": {
+    "name": "Custom Script",
+    "description": "Run custom Python or JavaScript code",
+    "icon": "code",
+    "category": "processor",
+    "fields": [
+      {
+        "name": "language",
+        "type": "select",
+        "label": "Language",
+        "placeholder": "Select language",
+        "required": true,
+        "options": [
+          {"value": "python", "label": "Python"},
+          {"value": "javascript", "label": "JavaScript"}
+        ],
+        "default": "python",
+        "help": "Programming language for the script"
+      },
+      {
+        "name": "script",
+        "type": "code_editor",
+        "label": "Script Code",
+        "placeholder": "# Python code here\ndef process(data):\n    # Process your data\n    return data",
+        "required": true,
+        "rows": 10,
+        "help": "Your custom code. Input data is available as 'data' variable"
+      },
+      {
+        "name": "timeout",
+        "type": "number",
+        "label": "Timeout (seconds)",
+        "placeholder": "30",
+        "required": false,
+        "min": 5,
+        "max": 300,
+        "default": 30,
+        "help": "Maximum execution time for the script"
+      }
+    ],
+    "inputs": [
+      {
+        "name": "data",
+        "type": "any",
+        "description": "Input data for the script"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "result",
+        "type": "any",
+        "description": "Script execution result"
+      }
+    ]
+  },
+  "conditional": {
+    "name": "Conditional",
+    "description": "Branch workflow based on conditions",
+    "icon": "fork_right",
+    "category": "control_flow",
+    "fields": [
+      {
+        "name": "condition",
+        "type": "text",
+        "label": "Condition Expression",
+        "placeholder": "data.length > 0",
+        "required": true,
+        "help": "JavaScript expression that evaluates to true/false"
+      },
+      {
+        "name": "condition_type",
+        "type": "select",
+        "label": "Condition Type",
+        "placeholder": "Select type",
+        "required": true,
+        "options": [
+          {"value": "expression", "label": "JavaScript Expression"},
+          {"value": "field_value", "label": "Field Value Comparison"},
+          {"value": "record_count", "label": "Record Count Check"}
+        ],
+        "default": "expression",
+        "help": "Type of condition to evaluate"
+      }
+    ],
+    "inputs": [
+      {
+        "name": "data",
+        "type": "any",
+        "description": "Input data to evaluate condition against"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "true",
+        "type": "any",
+        "description": "Output when condition is true"
+      },
+      {
+        "name": "false",
+        "type": "any",
+        "description": "Output when condition is false"
+      }
+    ]
+  }
+}

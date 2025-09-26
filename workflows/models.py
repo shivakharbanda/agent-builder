@@ -34,25 +34,69 @@ class DataSource(BaseModel):
 
 
 class Workflow(BaseModel):
-    """Orchestrates agents and data processing"""
-    STATUS_CHOICES = [
-        ('draft', 'Draft'),
-        ('active', 'Active'),
-        ('paused', 'Paused'),
-        ('completed', 'Completed'),
-    ]
-
+    """Orchestrates agents and data processing - core workflow definition"""
     name = models.CharField(max_length=200)
     description = models.TextField(blank=True)
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='workflows')
-    configuration = models.JSONField(default=dict, blank=True)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
+    configuration = models.JSONField(default=dict, blank=True)  # Only nodes/edges/metadata
 
     def __str__(self):
         return f"{self.name} ({self.project.name})"
 
     class Meta:
         db_table = 'workflows_workflow'
+        ordering = ['-created_at']
+
+
+class WorkflowProperties(BaseModel):
+    """Scheduling and orchestration properties for workflows"""
+    workflow = models.OneToOneField(Workflow, on_delete=models.CASCADE, related_name='properties')
+    watermark_start_date = models.DateTimeField(null=True, blank=True)
+    watermark_end_date = models.DateTimeField(null=True, blank=True)
+    schedule = models.CharField(max_length=100, blank=True, help_text="Cron expression for scheduling")
+    timeout = models.PositiveIntegerField(default=3600, help_text="Timeout in seconds")
+    retry_count = models.PositiveIntegerField(default=3, help_text="Number of retry attempts")
+    notification_email = models.EmailField(blank=True, help_text="Email for notifications")
+
+    def __str__(self):
+        return f"Properties for {self.workflow.name}"
+
+    class Meta:
+        db_table = 'workflows_workflow_properties'
+        ordering = ['workflow__name']
+
+
+class WorkflowExecution(BaseModel):
+    """Execution tracking and status for workflow runs"""
+    STATUS_CHOICES = [
+        ('draft', 'Draft'),
+        ('running', 'Running'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+        ('paused', 'Paused'),
+        ('cancelled', 'Cancelled'),
+    ]
+
+    TRIGGER_CHOICES = [
+        ('manual', 'Manual'),
+        ('schedule', 'Scheduled'),
+        ('api', 'API'),
+        ('webhook', 'Webhook'),
+    ]
+
+    workflow = models.ForeignKey(Workflow, on_delete=models.CASCADE, related_name='executions')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    execution_log = models.JSONField(default=dict, blank=True)
+    error_message = models.TextField(blank=True)
+    triggered_by = models.CharField(max_length=20, choices=TRIGGER_CHOICES, default='manual')
+
+    def __str__(self):
+        return f"{self.workflow.name} - {self.status} ({self.created_at})"
+
+    class Meta:
+        db_table = 'workflows_workflow_execution'
         ordering = ['-created_at']
 
 
