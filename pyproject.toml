@@ -11,4 +11,8 @@ dependencies = [
     "djangorestframework>=3.16.1",
     "django-cors-headers>=4.7.0",
     "djangorestframework-simplejwt>=5.5.0",
+    "dq-db-manager",
 ]
+
+[tool.uv.sources]
+dq-db-manager = { git = "https://github.com/Data-Quotient/dq_db_manager.git" }

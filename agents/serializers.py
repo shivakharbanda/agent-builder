@@ -43,7 +43,15 @@ class AgentSerializer(serializers.ModelSerializer):
             'project', 'project_name', 'prompts', 'agent_tools',
             'created_at', 'updated_at', 'created_by', 'is_active'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'created_by', 'project_name']
+        read_only_fields = ['id', 'created_at', 'updated_at', 'created_by', 'project_name', 'project']
+
+    def validate(self, data):
+        # Validate that structured agents have a schema definition
+        if data.get('return_type') == 'structured' and not data.get('schema_definition'):
+            raise serializers.ValidationError({
+                'schema_definition': 'Schema definition is required for structured return type.'
+            })
+        return data
 
     def create(self, validated_data):
         validated_data['created_by'] = self.context['request'].user
@@ -100,6 +108,14 @@ class AgentCompleteCreateSerializer(serializers.ModelSerializer):
             if len(existing_tools) != len(value):
                 raise serializers.ValidationError("One or more tool IDs are invalid")
         return value
+
+    def validate(self, data):
+        # Validate that structured agents have a schema definition
+        if data.get('return_type') == 'structured' and not data.get('schema_definition'):
+            raise serializers.ValidationError({
+                'schema_definition': 'Schema definition is required for structured return type.'
+            })
+        return data
 
     @transaction.atomic
     def create(self, validated_data):

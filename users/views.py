@@ -12,7 +12,7 @@ from rest_framework.response import Response
 from rest_framework import status
 
 
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, authentication_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 
@@ -37,7 +37,7 @@ class UserRegistrationView(generics.CreateAPIView):
             transfer_guest_data_to_user(user, guest_id)
 
 class CookieTokenObtainPairView(APIView):
-
+    authentication_classes = []  # Disable authentication for login
     permission_classes = [AllowAny]
     
     def post(self, request, *args, **kwargs):
@@ -101,6 +101,39 @@ def check_auth(request):
             "email": user.email,
         }
     })
+
+@api_view(["POST"])
+@authentication_classes([])  # Disable authentication for refresh
+@permission_classes([AllowAny])
+def refresh_token_view(request):
+    """Refresh token using cookie-based refresh token"""
+    refresh_token = request.COOKIES.get(settings.SIMPLE_JWT['AUTH_COOKIE_REFRESH'])
+
+    if not refresh_token:
+        return Response({"detail": "Refresh token not found"}, status=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        token = RefreshToken(refresh_token)
+        new_access_token = str(token.access_token)
+
+        response = Response({"detail": "Token refreshed successfully"})
+
+        # Set new access token cookie
+        response.set_cookie(
+            key=settings.SIMPLE_JWT["AUTH_COOKIE"],
+            value=new_access_token,
+            expires=settings.SIMPLE_JWT["ACCESS_TOKEN_LIFETIME"],
+            httponly=True,
+            secure=settings.SIMPLE_JWT["AUTH_COOKIE_SECURE"],
+            samesite=settings.SIMPLE_JWT["AUTH_COOKIE_SAMESITE"],
+            path=settings.SIMPLE_JWT["AUTH_COOKIE_PATH"],
+        )
+
+        return response
+
+    except Exception as e:
+        return Response({"detail": "Invalid refresh token"}, status=status.HTTP_401_UNAUTHORIZED)
+
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
