@@ -202,6 +202,65 @@ class WorkflowViewSet(viewsets.ModelViewSet):
                 created_by=user
             )
 
+    @action(detail=True, methods=['put'])
+    def update_complete(self, request, pk=None):
+        """Update complete workflow atomically: workflow + properties + nodes"""
+        from django.db import transaction
+
+        try:
+            with transaction.atomic():
+                workflow = self.get_object()
+
+                # Update main workflow fields
+                workflow.name = request.data.get('name', workflow.name)
+                workflow.description = request.data.get('description', workflow.description)
+                workflow.configuration = request.data.get('configuration', workflow.configuration)
+                workflow.save()
+
+                # Update/Create properties atomically
+                properties_data = request.data.get('properties', {})
+                if properties_data:
+                    properties_data_clean = self._clean_properties_data(properties_data)
+                    properties, created = WorkflowProperties.objects.get_or_create(
+                        workflow=workflow,
+                        defaults={**properties_data_clean, 'created_by': request.user}
+                    )
+
+                    if not created:
+                        # Update existing properties
+                        for field, value in properties_data_clean.items():
+                            setattr(properties, field, value)
+                        properties.save()
+
+                # Update workflow nodes from configuration
+                self._update_workflow_nodes_from_config(workflow, request.data.get('configuration', {}), request.user)
+
+                # Return complete workflow data
+                complete_serializer = WorkflowSerializer(workflow)
+                return Response(complete_serializer.data)
+
+        except Exception as e:
+            return Response({
+                'detail': f'Error updating workflow: {str(e)}'
+            }, status=400)
+
+    def _update_workflow_nodes_from_config(self, workflow, configuration, user):
+        """Update WorkflowNode records from configuration, replacing existing nodes"""
+        nodes_data = configuration.get('nodes', [])
+
+        # Clear existing nodes first (same pattern as create)
+        WorkflowNode.objects.filter(workflow=workflow).delete()
+
+        for index, node_data in enumerate(nodes_data):
+            WorkflowNode.objects.create(
+                workflow=workflow,
+                node_type=node_data.get('type', 'input'),
+                position=index,
+                visual_position=node_data.get('position', {'x': 100 + index * 200, 'y': 100}),
+                configuration=node_data.get('config', {}),
+                created_by=user
+            )
+
 
 class WorkflowNodeViewSet(viewsets.ModelViewSet):
     queryset = WorkflowNode.objects.filter(is_active=True)

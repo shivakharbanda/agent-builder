@@ -49,12 +49,13 @@ export default function CreateWorkflow() {
   });
   const [showConfig, setShowConfig] = useState(false);
   const [isLoadingWorkflow, setIsLoadingWorkflow] = useState(isEditMode);
+  const [showSuccessToast, setShowSuccessToast] = useState(false);
 
   // Form submission hook - use different API based on mode
   const { loading: saving, error: saveError, submit: submitWorkflow } = useFormSubmit(
     async (data: any) => {
       if (isEditMode) {
-        return api.updateWorkflow(Number(params.id), data);
+        return api.updateCompleteWorkflow(Number(params.id), data);
       } else {
         return api.saveCompleteWorkflow(data);
       }
@@ -153,11 +154,12 @@ export default function CreateWorkflow() {
 
       // Navigate based on mode
       if (isEditMode) {
-        // Stay on edit page or go to view page
-        navigate(`/workflows/${savedWorkflow.id}`);
+        // Stay on edit page - show success toast
+        setShowSuccessToast(true);
+        setTimeout(() => setShowSuccessToast(false), 3000);
       } else {
-        // Go to view page after create
-        navigate(`/workflows/${savedWorkflow.id}`);
+        // Go to edit page after create so user can continue building
+        navigate(`/workflows/${savedWorkflow.id}/edit`);
       }
     } catch (error) {
       // Error is handled by useFormSubmit hook and displayed in UI
@@ -261,6 +263,22 @@ export default function CreateWorkflow() {
           />
         </div>
       </div>
+
+      {/* Success Toast */}
+      {showSuccessToast && (
+        <div className="fixed top-4 right-4 z-50">
+          <div className="bg-green-500 text-white px-6 py-3 rounded-lg shadow-lg flex items-center gap-3 animate-in slide-in-from-right">
+            <span className="material-symbols-outlined text-xl">check_circle</span>
+            <span className="font-medium">Workflow updated successfully!</span>
+            <button
+              onClick={() => setShowSuccessToast(false)}
+              className="ml-2 text-green-100 hover:text-white transition-colors"
+            >
+              <span className="material-symbols-outlined text-sm">close</span>
+            </button>
+          </div>
+        </div>
+      )}
     </Layout>
   );
 }
