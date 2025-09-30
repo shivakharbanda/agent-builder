@@ -50,9 +50,15 @@ export default function CreateWorkflow() {
   const [showConfig, setShowConfig] = useState(false);
   const [isLoadingWorkflow, setIsLoadingWorkflow] = useState(isEditMode);
 
-  // Form submission hook
+  // Form submission hook - use different API based on mode
   const { loading: saving, error: saveError, submit: submitWorkflow } = useFormSubmit(
-    async (data: any) => api.saveCompleteWorkflow(data)
+    async (data: any) => {
+      if (isEditMode) {
+        return api.updateWorkflow(Number(params.id), data);
+      } else {
+        return api.saveCompleteWorkflow(data);
+      }
+    }
   );
 
   // Fetch workflow details if editing
@@ -109,8 +115,23 @@ export default function CreateWorkflow() {
         return;
       }
 
-      // Prepare complete workflow data for unified API
-      const completeWorkflowData = {
+      // Prepare workflow data based on mode
+      const workflowData = isEditMode ? {
+        // Update API expects simpler structure
+        name: workflowName,
+        description: workflowDescription,
+        configuration: {
+          nodes: workflowConfig.nodes,
+          edges: workflowConfig.edges,
+          metadata: {
+            ...workflowConfig.metadata,
+            name: workflowName,
+            description: workflowDescription,
+            updated: new Date().toISOString()
+          }
+        }
+      } : {
+        // Create API expects full structure
         name: workflowName,
         description: workflowDescription,
         project: 1, // TODO: Get from context or user selection
@@ -127,11 +148,17 @@ export default function CreateWorkflow() {
         properties: workflowConfig.properties
       };
 
-      // Single unified API call
-      const savedWorkflow = await submitWorkflow(completeWorkflowData);
+      // API call (create or update)
+      const savedWorkflow = await submitWorkflow(workflowData);
 
-      // Navigate to the saved workflow
-      navigate(`/workflows/${savedWorkflow.id}`);
+      // Navigate based on mode
+      if (isEditMode) {
+        // Stay on edit page or go to view page
+        navigate(`/workflows/${savedWorkflow.id}`);
+      } else {
+        // Go to view page after create
+        navigate(`/workflows/${savedWorkflow.id}`);
+      }
     } catch (error) {
       // Error is handled by useFormSubmit hook and displayed in UI
     }
@@ -181,10 +208,10 @@ export default function CreateWorkflow() {
                 {saving ? (
                   <>
                     <span className="material-symbols-outlined text-sm mr-1 animate-spin">progress_activity</span>
-                    Saving...
+                    {isEditMode ? 'Updating...' : 'Saving...'}
                   </>
                 ) : (
-                  'Save Workflow'
+                  isEditMode ? 'Update Workflow' : 'Save Workflow'
                 )}
               </Button>
             </div>
