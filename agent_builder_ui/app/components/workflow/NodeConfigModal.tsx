@@ -69,15 +69,6 @@ export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave }:
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
 
-    console.log('🔍 Validating form for nodeType:', nodeType);
-    console.log('📋 Current config:', config);
-    console.log('📝 Fields to validate:', nodeConfig?.fields?.map(f => ({
-      name: f.name,
-      required: f.required,
-      conditional: f.conditional,
-      shouldShow: f.conditional ? shouldShowField(f) : true,
-      currentValue: config[f.name]
-    })));
 
     nodeConfig?.fields?.forEach(field => {
       // Check required fields (only for non-conditional fields)
@@ -112,33 +103,22 @@ export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave }:
       }
     });
 
-    console.log('❗ Validation errors found:', newErrors);
-    console.log('✅ Validation result:', Object.keys(newErrors).length === 0);
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
   const handleSave = async () => {
-    console.log('🔧 NodeConfigModal: Attempting to save configuration:', {
-      nodeType,
-      config,
-      validation: validateForm()
-    });
 
     if (!validateForm()) {
-      console.warn('❌ Validation failed, not saving configuration');
       return;
     }
 
     setLoading(true);
     try {
-      console.log('📤 Calling onSave with config:', config);
       await onSave(config);
-      console.log('✅ Configuration saved successfully');
       onClose();
     } catch (error) {
-      console.error('❌ Error saving node configuration:', error);
     } finally {
       setLoading(false);
     }

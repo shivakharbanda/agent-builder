@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router';
+import React, { useState, useEffect } from 'react';
+import { Link, useNavigate, useParams } from 'react-router';
 import type { Route } from './+types/create';
 
 import { Layout } from '../../components/layout/Layout';
@@ -23,6 +23,7 @@ export function meta({}: Route.MetaArgs) {
 
 export default function CreateWorkflow() {
   const navigate = useNavigate();
+  const params = useParams();
   const [searchValue, setSearchValue] = useState('');
   const [workflowName, setWorkflowName] = useState('Untitled Workflow');
   const [workflowDescription, setWorkflowDescription] = useState('');
@@ -46,19 +47,51 @@ export default function CreateWorkflow() {
     }
   });
   const [showConfig, setShowConfig] = useState(false);
+  const [isLoadingWorkflow, setIsLoadingWorkflow] = useState(false);
 
   // Form submission hook
   const { loading: saving, error: saveError, submit: submitWorkflow } = useFormSubmit(
     async (data: any) => api.saveCompleteWorkflow(data)
   );
 
+  // Fetch workflow details if editing
+  useEffect(() => {
+    const workflowId = params.id;
+    if (workflowId) {
+      api.getWorkflow(Number(workflowId))
+        .then(workflow => {
+          console.log('Workflow details:', workflow);
+
+          setIsLoadingWorkflow(true);
+
+          // Map workflow data back to state
+          setWorkflowName(workflow.name);
+          setWorkflowDescription(workflow.description);
+
+          // Fix properties mapping - properties is at root level, not in configuration
+          setWorkflowConfig({
+            nodes: workflow.configuration.nodes,
+            edges: workflow.configuration.edges,
+            metadata: workflow.configuration.metadata,
+            properties: workflow.properties  // From root level!
+          });
+
+          // Brief delay to prevent recursive updates
+          setTimeout(() => setIsLoadingWorkflow(false), 100);
+        })
+        .catch(error => {
+          console.error('Error fetching workflow:', error);
+        });
+    }
+  }, [params.id]);
+
   const handleConfigChange = (config: WorkflowConfig) => {
+    if (isLoadingWorkflow) return; // Skip during initial load
     setWorkflowConfig(config);
   };
 
   const handleChatCommand = (command: string) => {
     // Handle chat commands here
-    console.log('Chat command:', command);
     // You can extend this to parse commands and manipulate the workflow
   };
 
@@ -93,17 +126,12 @@ export default function CreateWorkflow() {
         properties: workflowConfig.properties
       };
 
-      console.log('Saving complete workflow:', completeWorkflowData);
-
       // Single unified API call
       const savedWorkflow = await submitWorkflow(completeWorkflowData);
-
-      console.log('Workflow saved successfully:', savedWorkflow);
 
       // Navigate to the saved workflow
       navigate(`/workflows/${savedWorkflow.id}`);
     } catch (error) {
-      console.error('Error saving workflow:', error);
       // Error is handled by useFormSubmit hook and displayed in UI
     }
   };
@@ -193,7 +221,7 @@ export default function CreateWorkflow() {
           {/* Main Canvas */}
           <main className="flex-grow bg-[#111a22] relative">
             <WorkflowErrorBoundary>
-              <WorkflowCanvas onConfigChange={handleConfigChange} />
+              <WorkflowCanvas onConfigChange={handleConfigChange} initialConfig={workflowConfig} />
             </WorkflowErrorBoundary>
           </main>
 

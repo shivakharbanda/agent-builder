@@ -43,14 +43,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const login = async (credentials: LoginRequest) => {
     try {
-      console.log('AuthContext: Starting login with credentials:', credentials);
       const response = await api.login(credentials);
-      console.log('AuthContext: Login API response:', response);
       // After successful login, check auth to get user data
       await checkAuth();
-      console.log('AuthContext: Login completed successfully');
     } catch (error) {
-      console.error('AuthContext: Login error:', error);
       throw error;
     }
   };

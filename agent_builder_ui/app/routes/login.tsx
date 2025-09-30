@@ -26,17 +26,13 @@ export default function Login() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('Form submitted!', credentials);
     setLoading(true);
     setError('');
 
     try {
-      console.log('Calling login...');
       await login(credentials);
-      console.log('Login successful, navigating...');
       navigate('/'); // Redirect to dashboard after successful login
     } catch (err: any) {
-      console.error('Login error:', err);
       setError(err.detail || 'Login failed. Please try again.');
     } finally {
       setLoading(false);

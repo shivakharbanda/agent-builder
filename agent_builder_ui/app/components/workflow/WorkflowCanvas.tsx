@@ -383,7 +383,6 @@ export function WorkflowCanvas({ onConfigChange, initialConfig }: WorkflowCanvas
 
   useEffect(() => {
     if (!initialConfig) {
-      console.log('WorkflowCanvas: No initial config provided');
       setNodes([]);
       setEdges([]);
       setInitialized(true);
@@ -398,14 +397,11 @@ export function WorkflowCanvas({ onConfigChange, initialConfig }: WorkflowCanvas
       return;
     }
 
-    console.log('WorkflowCanvas: Initializing with config:', initialConfig);
-    console.log('WorkflowCanvas: Initial config nodes:', initialConfig.nodes);
 
     lastConfigRef.current = initialConfig;
     setWorkflowConfig(initialConfig);
 
     if (initialConfig.nodes && initialConfig.nodes.length > 0) {
-      console.log('WorkflowCanvas: Processing nodes for ReactFlow...');
 
       // Convert WorkflowConfig nodes to ReactFlow nodes
       const reactFlowNodes: Node[] = initialConfig.nodes.map((node, index) => {
@@ -422,11 +418,9 @@ export function WorkflowCanvas({ onConfigChange, initialConfig }: WorkflowCanvas
           }
         };
 
-        console.log(`WorkflowCanvas: Converted node ${node.id} to ReactFlow:`, reactFlowNode);
         return reactFlowNode;
       });
 
-      console.log('WorkflowCanvas: All ReactFlow nodes:', reactFlowNodes);
 
       // Convert WorkflowConfig edges to ReactFlow edges
       const reactFlowEdges: Edge[] = initialConfig.edges.map(edge => ({
@@ -438,11 +432,9 @@ export function WorkflowCanvas({ onConfigChange, initialConfig }: WorkflowCanvas
         style: { stroke: '#1173d4', strokeWidth: 2 }
       }));
 
-      console.log('WorkflowCanvas: Setting nodes and edges in ReactFlow...');
       setNodes(reactFlowNodes);
       setEdges(reactFlowEdges);
     } else {
-      console.log('WorkflowCanvas: No nodes in config, clearing ReactFlow...');
       setNodes([]);
       setEdges([]);
     }
@@ -479,11 +471,6 @@ export function WorkflowCanvas({ onConfigChange, initialConfig }: WorkflowCanvas
     // Notify parent directly without updating local state
     onConfigChange?.(currentConfig);
 
-    console.log('🔧 Workflow Updated:', {
-      nodes: currentConfig.nodes.length,
-      edges: currentConfig.edges.length,
-      timestamp: currentConfig.metadata.updated
-    });
   }, [nodes, edges, initialized, workflowConfig]);
 
   // Set initial viewport to prevent zoom issues
@@ -500,7 +487,6 @@ export function WorkflowCanvas({ onConfigChange, initialConfig }: WorkflowCanvas
   }, []);
 
   const handleNodeDelete = useCallback((nodeId: string) => {
-    console.log('WorkflowCanvas: Deleting node:', nodeId);
     setNodes((nodes) => nodes.filter((node) => node.id !== nodeId));
     setEdges((edges) => edges.filter((edge) =>
       edge.source !== nodeId && edge.target !== nodeId
@@ -528,12 +514,6 @@ export function WorkflowCanvas({ onConfigChange, initialConfig }: WorkflowCanvas
   const saveNodeConfig = useCallback((newConfig: any) => {
     if (!configModal.nodeId) return;
 
-    console.log('🔧 Saving Node Configuration:', {
-      nodeId: configModal.nodeId,
-      nodeType: configModal.nodeType,
-      oldConfig: nodes.find(n => n.id === configModal.nodeId)?.data?.config,
-      newConfig: newConfig
-    });
 
     setNodes((nodes) =>
       nodes.map((node) =>
@@ -543,11 +523,6 @@ export function WorkflowCanvas({ onConfigChange, initialConfig }: WorkflowCanvas
       )
     );
 
-    console.log('✅ Node configuration saved successfully:', {
-      nodeId: configModal.nodeId,
-      nodeType: configModal.nodeType,
-      config: newConfig
-    });
 
     closeNodeConfig();
   }, [configModal.nodeId, configModal.nodeType, setNodes, closeNodeConfig]);
@@ -572,11 +547,6 @@ export function WorkflowCanvas({ onConfigChange, initialConfig }: WorkflowCanvas
         }
       };
 
-      console.log('🔧 Workflow Properties Updated:', {
-        properties: newProperties,
-        timestamp: new Date().toISOString(),
-        fullConfig: updatedConfig
-      });
 
       return updatedConfig;
     });

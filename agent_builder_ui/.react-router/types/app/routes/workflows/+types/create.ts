@@ -15,6 +15,12 @@ type Matches = [{
 }, {
   id: "routes/workflows/create";
   module: typeof import("../create.js");
+}] | [{
+  id: "root";
+  module: typeof import("../../../root.js");
+}, {
+  id: "workflow-edit";
+  module: typeof import("../create.js");
 }];
 
 type Annotations = GetAnnotations<Info & { module: Module, matches: Matches }, false>;

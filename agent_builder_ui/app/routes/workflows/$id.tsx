@@ -134,7 +134,6 @@ export default function WorkflowDetail() {
       return;
     }
 
-    console.log('Converting workflow nodes:', workflow.nodes);
 
     // Map backend node types to frontend types
     const mapNodeType = (backendType: string): string => {
@@ -159,7 +158,6 @@ export default function WorkflowDetail() {
     const flowNodes: Node[] = workflow.nodes.map((node) => {
       const configNodeId = getConfigNodeId(node);
       const nodeId = configNodeId || node.id.toString();
-      console.log(`Node mapping: Backend ID ${node.id} → Config ID ${configNodeId} → Final ID ${nodeId}`);
 
       return {
         id: nodeId,
@@ -179,7 +177,6 @@ export default function WorkflowDetail() {
 
     // Convert edges from configuration
     const flowEdges: Edge[] = (workflow.configuration?.edges || []).map((edge: any) => {
-      console.log(`Edge: ${edge.source} → ${edge.target}`);
       return {
         id: edge.id || `${edge.source}-${edge.target}`,
         source: edge.source.toString(), // Ensure string type

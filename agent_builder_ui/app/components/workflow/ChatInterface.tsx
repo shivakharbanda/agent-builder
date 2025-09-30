@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Input } from '../ui/Input';
 
 interface ChatMessage {
@@ -13,14 +13,21 @@ interface ChatInterfaceProps {
 }
 
 export function ChatInterface({ onCommand }: ChatInterfaceProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: 1,
-      text: "Hello! How can I help you build your workflow today? You can ask me to add nodes, connect them, or modify their settings.",
-      isAI: true,
-      timestamp: new Date(),
-    },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [isInitialized, setIsInitialized] = useState(false);
+
+  // Initialize messages on client side only to avoid hydration mismatch
+  useEffect(() => {
+    setMessages([
+      {
+        id: 1,
+        text: "Hello! How can I help you build your workflow today? You can ask me to add nodes, connect them, or modify their settings.",
+        isAI: true,
+        timestamp: new Date(),
+      },
+    ]);
+    setIsInitialized(true);
+  }, []);
   const [inputValue, setInputValue] = useState('');
 
   const handleSend = () => {
@@ -99,9 +106,11 @@ export function ChatInterface({ onCommand }: ChatInterfaceProps) {
               message.isAI ? 'bg-[#111a22]' : 'bg-[#1173d4]'
             }`}>
               <p className="text-sm text-white whitespace-pre-line">{message.text}</p>
-              <span className="text-xs text-gray-400 mt-1 block">
-                {message.timestamp.toLocaleTimeString()}
-              </span>
+              {isInitialized && (
+                <span className="text-xs text-gray-400 mt-1 block">
+                  {message.timestamp.toLocaleTimeString()}
+                </span>
+              )}
             </div>
           </div>
         ))}

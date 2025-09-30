@@ -63,9 +63,6 @@ export function useAPICall<T>(
       setData(result);
       setRetryCount(0); // Reset retry count on success
 
-      if (APP_CONFIG.ENABLE_DEBUG) {
-        console.log('API call successful:', result);
-      }
     } catch (err) {
       const apiError = err as APIError;
       const errorMessage = apiError.detail || apiError.message || 'An error occurred';
@@ -79,9 +76,6 @@ export function useAPICall<T>(
         const nextRetryCount = retryCount + 1;
         setRetryCount(nextRetryCount);
 
-        if (APP_CONFIG.ENABLE_DEBUG) {
-          console.log(`Retrying API call (${nextRetryCount}/${maxRetries}) in ${retryDelay}ms`);
-        }
 
         retryTimeoutRef.current = setTimeout(() => {
           execute(true);

@@ -21,7 +21,7 @@ export function ConfigViewer({ config, isVisible, onToggle }: ConfigViewerProps)
       configuredNodes: config.nodes.filter(node =>
         Object.keys(node.config).some(key => node.config[key])
       ).length,
-      lastUpdated: new Date(config.metadata.updated).toLocaleString()
+      lastUpdated: new Date(config.metadata.updated).toISOString().replace('T', ' ').slice(0, 19)
     };
   };
 
@@ -161,7 +161,7 @@ export function ConfigViewer({ config, isVisible, onToggle }: ConfigViewerProps)
                         <div>
                           <span className="text-xs text-gray-400">Watermark Start:</span>
                           <div className="text-sm text-white">
-                            {new Date(config.properties.watermark_start_date).toLocaleString()}
+                            {new Date(config.properties.watermark_start_date).toISOString().replace('T', ' ').slice(0, 19)}
                           </div>
                         </div>
                       )}
@@ -169,7 +169,7 @@ export function ConfigViewer({ config, isVisible, onToggle }: ConfigViewerProps)
                         <div>
                           <span className="text-xs text-gray-400">Watermark End:</span>
                           <div className="text-sm text-white">
-                            {new Date(config.properties.watermark_end_date).toLocaleString()}
+                            {new Date(config.properties.watermark_end_date).toISOString().replace('T', ' ').slice(0, 19)}
                           </div>
                         </div>
                       )}

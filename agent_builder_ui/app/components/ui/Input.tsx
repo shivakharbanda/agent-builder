@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useId } from 'react';
 import { cn } from '../../lib/utils';
 
 interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
@@ -19,7 +19,8 @@ export function Input({
   id,
   ...props
 }: InputProps) {
-  const inputId = id || `input-${Math.random().toString(36).substr(2, 9)}`;
+  const generatedId = useId();
+  const inputId = id || generatedId;
 
   return (
     <div className="space-y-2">
@@ -80,7 +81,8 @@ export function Textarea({
   id,
   ...props
 }: TextareaProps) {
-  const textareaId = id || `textarea-${Math.random().toString(36).substr(2, 9)}`;
+  const generatedId = useId();
+  const textareaId = id || generatedId;
 
   return (
     <div className="space-y-2">
@@ -130,7 +132,8 @@ export function Select({
   id,
   ...props
 }: SelectProps) {
-  const selectId = id || `select-${Math.random().toString(36).substr(2, 9)}`;
+  const generatedId = useId();
+  const selectId = id || generatedId;
 
   return (
     <div className="space-y-2">

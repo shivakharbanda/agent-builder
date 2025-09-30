@@ -47,9 +47,6 @@ class AgentBuilderAPI {
     // Request interceptor
     this.client.interceptors.request.use(
       (config) => {
-        if (APP_CONFIG.ENABLE_DEBUG) {
-          console.log(`API Request: ${config.method?.toUpperCase()} ${config.url}`, config);
-        }
 
         // Add CSRF token if available
         const csrfToken = this.getCSRFToken();
@@ -75,9 +72,6 @@ class AgentBuilderAPI {
     // Response interceptor with retry logic
     this.client.interceptors.response.use(
       (response) => {
-        if (APP_CONFIG.ENABLE_DEBUG) {
-          console.log(`API Response: ${response.config.method?.toUpperCase()} ${response.config.url}`, response.data);
-        }
         return response;
       },
       async (error: AxiosError) => {
@@ -117,16 +111,10 @@ class AgentBuilderAPI {
     if (typeof window !== 'undefined') {
       window.addEventListener('online', () => {
         isOnline = true;
-        if (APP_CONFIG.ENABLE_DEBUG) {
-          console.log('Network connection restored');
-        }
       });
 
       window.addEventListener('offline', () => {
         isOnline = false;
-        if (APP_CONFIG.ENABLE_DEBUG) {
-          console.log('Network connection lost');
-        }
       });
     }
   }
@@ -560,9 +548,7 @@ class AgentBuilderAPI {
 
   // Authentication API
   async login(credentials: LoginRequest): Promise<LoginResponse> {
-    console.log('API: Making login request to /auth/token/ with:', credentials);
     const response = await this.client.post<LoginResponse>('/auth/token/', credentials);
-    console.log('API: Login response received:', response.data);
     return response.data;
   }
 

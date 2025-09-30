@@ -116,39 +116,29 @@ export default function CreateAgent() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('Form submitted with data:', formData);
 
     // Validate required fields
     if (!formData.name.trim()) {
-      console.error('Name is required');
       return;
     }
 
     if (formData.project === 0) {
-      console.error('Project must be selected');
       return;
     }
 
     // Validate schema if structured
     if (formData.return_type === 'structured' && formData.schema_definition) {
-      console.log('Validating JSON schema:', formData.schema_definition);
-      console.log('Schema length:', formData.schema_definition.length);
 
       if (!isValidJSON(formData.schema_definition)) {
-        console.error('JSON schema validation failed');
         setSchemaError('Invalid JSON schema');
         return;
       }
-      console.log('JSON schema validation passed');
     }
 
     try {
-      console.log('Submitting form...');
       const agent = await submit(formData);
-      console.log('Agent created:', agent);
       navigate(`/agents/${agent.id}`);
     } catch (err) {
-      console.error('Form submission error:', err);
       // Error is handled by the hook
     }
   };

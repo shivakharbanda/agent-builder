@@ -100,11 +100,9 @@ export default function EditCredential() {
     };
 
     try {
-      console.log('Updating credential with data:', updateData);
       await submit(updateData);
       navigate('/credentials');
     } catch (err) {
-      console.error('Credential update error:', err);
       // Error is handled by the hook
     }
   };

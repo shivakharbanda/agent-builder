@@ -11,6 +11,7 @@ export default [
   route("workflows", "routes/workflows.tsx"),
   route("workflows/create", "routes/workflows/create.tsx"),
   route("workflows/:id", "routes/workflows/$id.tsx"),
+  route("workflows/:id/edit", "routes/workflows/create.tsx", { id: "workflow-edit" }),
   route("tools", "routes/tools.tsx"),
   route("credentials", "routes/credentials.tsx"),
   route("credentials/create", "routes/credentials/create.tsx"),

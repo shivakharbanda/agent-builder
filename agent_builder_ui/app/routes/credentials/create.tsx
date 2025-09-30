@@ -81,11 +81,9 @@ export default function CreateCredential() {
     }
 
     try {
-      console.log('Submitting form data:', formData);
       await submit(formData);
       navigate('/credentials');
     } catch (err) {
-      console.error('Form submission error:', err);
       // Error is handled by the hook
     }
   };
