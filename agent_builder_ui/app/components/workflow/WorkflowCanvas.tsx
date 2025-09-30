@@ -22,6 +22,7 @@ import { Button } from '../ui/Button';
 interface WorkflowCanvasProps {
   onConfigChange?: (config: WorkflowConfig) => void;
   initialConfig?: WorkflowConfig;
+  isLoading?: boolean;
 }
 
 // Custom node components
@@ -334,7 +335,7 @@ const nodeTypes = {
   conditional: ConditionalNode,
 };
 
-export function WorkflowCanvas({ onConfigChange, initialConfig }: WorkflowCanvasProps) {
+export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading }: WorkflowCanvasProps) {
   // React Flow manages node/edge arrays internally
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -379,31 +380,37 @@ export function WorkflowCanvas({ onConfigChange, initialConfig }: WorkflowCanvas
 
   // Simple one-time initialization
   const [initialized, setInitialized] = useState(false);
+  const [hasInitialized, setHasInitialized] = useState(false);
   const lastConfigRef = useRef<WorkflowConfig | null>(null);
 
   useEffect(() => {
-    if (!initialConfig) {
-      setNodes([]);
-      setEdges([]);
-      setInitialized(true);
-      return;
-    }
+    if (hasInitialized) return; // Initialize only once
+    if (isLoading) return; // Wait for API data in edit mode
 
-    // Skip if same config (deep comparison of key properties)
-    if (lastConfigRef.current &&
-        lastConfigRef.current.nodes.length === initialConfig.nodes.length &&
-        lastConfigRef.current.edges.length === initialConfig.edges.length &&
-        JSON.stringify(lastConfigRef.current.nodes) === JSON.stringify(initialConfig.nodes)) {
-      return;
-    }
-
-
+    setHasInitialized(true);
     lastConfigRef.current = initialConfig;
-    setWorkflowConfig(initialConfig);
+    setWorkflowConfig(initialConfig || {
+      nodes: [],
+      edges: [],
+      properties: {
+        watermark_start_date: '',
+        watermark_end_date: '',
+        schedule: '',
+        timeout: 3600,
+        retry_count: 3,
+        notification_email: ''
+      },
+      metadata: {
+        name: 'Untitled Workflow',
+        description: '',
+        version: '1.0.0',
+        created: new Date().toISOString(),
+        updated: new Date().toISOString(),
+      }
+    });
 
-    if (initialConfig.nodes && initialConfig.nodes.length > 0) {
-
-      // Convert WorkflowConfig nodes to ReactFlow nodes
+    if (initialConfig && initialConfig.nodes && initialConfig.nodes.length > 0) {
+      // Edit mode: Load existing nodes
       const reactFlowNodes: Node[] = initialConfig.nodes.map((node, index) => {
         const reactFlowNode: Node = {
           id: node.id,
@@ -421,8 +428,6 @@ export function WorkflowCanvas({ onConfigChange, initialConfig }: WorkflowCanvas
         return reactFlowNode;
       });
 
-
-      // Convert WorkflowConfig edges to ReactFlow edges
       const reactFlowEdges: Edge[] = initialConfig.edges.map(edge => ({
         id: `${edge.source}-${edge.target}`,
         source: edge.source,
@@ -435,14 +440,13 @@ export function WorkflowCanvas({ onConfigChange, initialConfig }: WorkflowCanvas
       setNodes(reactFlowNodes);
       setEdges(reactFlowEdges);
     } else {
+      // Create mode: Empty canvas
       setNodes([]);
       setEdges([]);
     }
 
-    if (!initialized) {
-      setInitialized(true);
-    }
-  }, [initialConfig]);
+    setInitialized(true);
+  }, [initialConfig, hasInitialized, isLoading]);
 
   // Only notify parent when nodes/edges change directly - no state sync
   useEffect(() => {

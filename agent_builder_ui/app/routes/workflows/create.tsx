@@ -24,6 +24,7 @@ export function meta({}: Route.MetaArgs) {
 export default function CreateWorkflow() {
   const navigate = useNavigate();
   const params = useParams();
+  const isEditMode = Boolean(params.id);
   const [searchValue, setSearchValue] = useState('');
   const [workflowName, setWorkflowName] = useState('Untitled Workflow');
   const [workflowDescription, setWorkflowDescription] = useState('');
@@ -47,7 +48,7 @@ export default function CreateWorkflow() {
     }
   });
   const [showConfig, setShowConfig] = useState(false);
-  const [isLoadingWorkflow, setIsLoadingWorkflow] = useState(false);
+  const [isLoadingWorkflow, setIsLoadingWorkflow] = useState(isEditMode);
 
   // Form submission hook
   const { loading: saving, error: saveError, submit: submitWorkflow } = useFormSubmit(
@@ -221,7 +222,7 @@ export default function CreateWorkflow() {
           {/* Main Canvas */}
           <main className="flex-grow bg-[#111a22] relative">
             <WorkflowErrorBoundary>
-              <WorkflowCanvas onConfigChange={handleConfigChange} initialConfig={workflowConfig} />
+              <WorkflowCanvas onConfigChange={handleConfigChange} initialConfig={workflowConfig} isLoading={isLoadingWorkflow} />
             </WorkflowErrorBoundary>
           </main>
 
