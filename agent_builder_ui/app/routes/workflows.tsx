@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router';
 import type { Route } from './+types/workflows';
 import { Layout } from '../components/layout/Layout';
@@ -9,6 +9,7 @@ import { LoadingState, EmptyState } from '../components/ui/Loading';
 import { APIErrorBoundary } from '../components/ui/ErrorBoundary';
 import { useWorkflows } from '../hooks/useAPI';
 import { formatRelativeTime } from '../lib/utils';
+import { api } from '../lib/api';
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -18,7 +19,23 @@ export function meta({}: Route.MetaArgs) {
 }
 
 export default function Workflows() {
-  const { data: workflows, loading, error, isConnected, retryCount } = useWorkflows();
+  const { data: workflows, loading, error, isConnected, retryCount, refetch } = useWorkflows();
+  const [deleting, setDeleting] = useState<number | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<{ id: number; name: string } | null>(null);
+
+  const handleDelete = async (workflowId: number) => {
+    try {
+      setDeleting(workflowId);
+      await api.deleteWorkflow(workflowId);
+      await refetch(); // Refresh the list
+      setShowDeleteConfirm(null);
+    } catch (error) {
+      console.error('Failed to delete workflow:', error);
+      // TODO: Show error toast notification
+    } finally {
+      setDeleting(null);
+    }
+  };
 
   return (
     <Layout>
@@ -101,12 +118,24 @@ export default function Workflows() {
                       Created {formatRelativeTime(workflow.created_at)}
                     </span>
                     <div className="flex gap-2">
-                      <Button size="sm" variant="outline">
-                        <span className="material-symbols-outlined text-sm">edit</span>
-                        Edit
+                      <Button size="sm" variant="outline" asChild>
+                        <Link to={`/workflows/${workflow.id}/edit`}>
+                          <span className="material-symbols-outlined text-sm">edit</span>
+                          Edit
+                        </Link>
                       </Button>
                       <Button size="sm" asChild>
                         <Link to={`/workflows/${workflow.id}`}>View</Link>
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="danger"
+                        onClick={() => setShowDeleteConfirm({ id: workflow.id, name: workflow.name })}
+                        disabled={deleting === workflow.id}
+                        loading={deleting === workflow.id}
+                      >
+                        <span className="material-symbols-outlined text-sm">delete</span>
+                        Delete
                       </Button>
                     </div>
                   </div>
@@ -142,6 +171,41 @@ export default function Workflows() {
             <div className="flex items-center gap-2 text-red-400 text-sm">
               <span className="material-symbols-outlined text-sm">error</span>
               <span>{error}</span>
+            </div>
+          </div>
+        )}
+
+        {/* Delete Confirmation Modal */}
+        {showDeleteConfirm && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-[#1a2633] rounded-lg p-6 max-w-md w-full mx-4">
+              <div className="flex items-center gap-3 mb-4">
+                <span className="material-symbols-outlined text-red-400 text-2xl">warning</span>
+                <h3 className="text-lg font-semibold text-white">Delete Workflow</h3>
+              </div>
+
+              <p className="text-gray-300 mb-6">
+                Are you sure you want to delete <strong>{showDeleteConfirm.name}</strong>? This action cannot be undone.
+                All workflow nodes, configurations, and execution history will be permanently removed.
+              </p>
+
+              <div className="flex gap-3 justify-end">
+                <Button
+                  variant="outline"
+                  onClick={() => setShowDeleteConfirm(null)}
+                  disabled={deleting !== null}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="danger"
+                  onClick={() => handleDelete(showDeleteConfirm.id)}
+                  loading={deleting === showDeleteConfirm.id}
+                  leftIcon={<span className="material-symbols-outlined text-base">delete</span>}
+                >
+                  Delete Workflow
+                </Button>
+              </div>
             </div>
           </div>
         )}

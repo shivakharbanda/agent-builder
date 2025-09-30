@@ -110,7 +110,8 @@ class WorkflowNode(BaseModel):
 
     workflow = models.ForeignKey(Workflow, on_delete=models.CASCADE, related_name='nodes')
     node_type = models.CharField(max_length=10, choices=NODE_TYPE_CHOICES)
-    position = models.PositiveIntegerField()
+    position = models.PositiveIntegerField()  # Order position
+    visual_position = models.JSONField(default=dict, blank=True, help_text="Canvas position as {x, y}")  # Canvas position
     configuration = models.JSONField(default=dict, blank=True)
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, null=True, blank=True)
     data_source = models.ForeignKey(DataSource, on_delete=models.CASCADE, null=True, blank=True)

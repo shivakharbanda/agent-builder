@@ -80,6 +80,128 @@ class WorkflowViewSet(viewsets.ModelViewSet):
                 return Response(serializer.data, status=201)
             return Response(serializer.errors, status=400)
 
+    @action(detail=False, methods=['post'])
+    def save_complete(self, request):
+        """Save complete workflow with properties and nodes in single atomic transaction"""
+        from django.db import transaction
+
+        try:
+            with transaction.atomic():
+                # Extract data from request
+                workflow_data = {
+                    'name': request.data.get('name'),
+                    'description': request.data.get('description', ''),
+                    'project': request.data.get('project'),
+                    'configuration': request.data.get('configuration', {})
+                }
+
+                properties_data = request.data.get('properties', {})
+
+                # Create workflow
+                workflow_serializer = WorkflowSerializer(data=workflow_data)
+                if not workflow_serializer.is_valid():
+                    return Response({
+                        'workflow_errors': workflow_serializer.errors
+                    }, status=400)
+
+                workflow = workflow_serializer.save(created_by=request.user)
+
+                # Create/update properties with flexible date handling
+                properties_data_clean = self._clean_properties_data(properties_data)
+                properties, created = WorkflowProperties.objects.get_or_create(
+                    workflow=workflow,
+                    defaults={**properties_data_clean, 'created_by': request.user}
+                )
+
+                if not created:
+                    # Update existing properties
+                    properties_serializer = WorkflowPropertiesSerializer(
+                        properties, data=properties_data_clean, partial=True
+                    )
+                    if not properties_serializer.is_valid():
+                        return Response({
+                            'properties_errors': properties_serializer.errors
+                        }, status=400)
+                    properties_serializer.save()
+
+                # Create initial execution record
+                WorkflowExecution.objects.get_or_create(
+                    workflow=workflow,
+                    defaults={
+                        'status': 'draft',
+                        'created_by': request.user
+                    }
+                )
+
+                # Create workflow nodes from configuration
+                self._create_workflow_nodes_from_config(workflow, request.data.get('configuration', {}), request.user)
+
+                # Return complete workflow data
+                complete_serializer = WorkflowSerializer(workflow)
+                return Response(complete_serializer.data, status=201)
+
+        except Exception as e:
+            return Response({
+                'detail': f'Error saving workflow: {str(e)}'
+            }, status=400)
+
+    def _clean_properties_data(self, properties_data):
+        """Clean and format properties data, especially dates"""
+        from django.utils.dateparse import parse_datetime, parse_date
+        from django.utils import timezone
+
+        cleaned_data = properties_data.copy()
+
+        # Handle date fields with Django's built-in parsing
+        date_fields = ['watermark_start_date', 'watermark_end_date']
+        for field in date_fields:
+            if field in cleaned_data and cleaned_data[field]:
+                try:
+                    if isinstance(cleaned_data[field], str):
+                        # Try Django's datetime parser first
+                        parsed_date = parse_datetime(cleaned_data[field])
+                        if not parsed_date:
+                            # Try date parser if datetime fails
+                            parsed_date_only = parse_date(cleaned_data[field])
+                            if parsed_date_only:
+                                # Convert date to datetime with timezone
+                                parsed_date = timezone.make_aware(
+                                    timezone.datetime.combine(parsed_date_only, timezone.datetime.min.time())
+                                )
+
+                        if parsed_date:
+                            cleaned_data[field] = parsed_date.isoformat()
+                        else:
+                            cleaned_data[field] = None
+                    elif cleaned_data[field] == '':
+                        # Empty string becomes None
+                        cleaned_data[field] = None
+                except (ValueError, TypeError, AttributeError):
+                    # If any parsing fails, set to None
+                    cleaned_data[field] = None
+            elif field in cleaned_data and cleaned_data[field] == '':
+                # Handle empty strings
+                cleaned_data[field] = None
+
+        return cleaned_data
+
+    def _create_workflow_nodes_from_config(self, workflow, configuration, user):
+        """Create WorkflowNode records from configuration, avoiding duplicates"""
+        nodes_data = configuration.get('nodes', [])
+
+        # Clear existing nodes first
+        WorkflowNode.objects.filter(workflow=workflow).delete()
+
+        for index, node_data in enumerate(nodes_data):
+            WorkflowNode.objects.create(
+                workflow=workflow,
+                node_type=node_data.get('type', 'input'),
+                position=index,
+                visual_position=node_data.get('position', {'x': 100 + index * 200, 'y': 100}),
+                configuration=node_data.get('config', {}),
+                created_by=user
+            )
+
 
 class WorkflowNodeViewSet(viewsets.ModelViewSet):
     queryset = WorkflowNode.objects.filter(is_active=True)

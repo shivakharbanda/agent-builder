@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect } from 'react';
+import { useCallback, useState, useEffect, useRef } from 'react';
 import {
   ReactFlow,
   useNodesState,
@@ -21,6 +21,7 @@ import { Button } from '../ui/Button';
 
 interface WorkflowCanvasProps {
   onConfigChange?: (config: WorkflowConfig) => void;
+  initialConfig?: WorkflowConfig;
 }
 
 // Custom node components
@@ -333,9 +334,10 @@ const nodeTypes = {
   conditional: ConditionalNode,
 };
 
-export function WorkflowCanvas({ onConfigChange }: WorkflowCanvasProps) {
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+export function WorkflowCanvas({ onConfigChange, initialConfig }: WorkflowCanvasProps) {
+  // React Flow manages node/edge arrays internally
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
   // Node configuration modal state
   const [configModal, setConfigModal] = useState<{
@@ -375,13 +377,90 @@ export function WorkflowCanvas({ onConfigChange }: WorkflowCanvasProps) {
     isOpen: false
   });
 
-  // Update config whenever nodes or edges change
+  // Simple one-time initialization
+  const [initialized, setInitialized] = useState(false);
+  const lastConfigRef = useRef<WorkflowConfig | null>(null);
+
   useEffect(() => {
-    setWorkflowConfig(prev => ({
-      ...prev,
+    if (!initialConfig) {
+      console.log('WorkflowCanvas: No initial config provided');
+      setNodes([]);
+      setEdges([]);
+      setInitialized(true);
+      return;
+    }
+
+    // Skip if same config (deep comparison of key properties)
+    if (lastConfigRef.current &&
+        lastConfigRef.current.nodes.length === initialConfig.nodes.length &&
+        lastConfigRef.current.edges.length === initialConfig.edges.length &&
+        JSON.stringify(lastConfigRef.current.nodes) === JSON.stringify(initialConfig.nodes)) {
+      return;
+    }
+
+    console.log('WorkflowCanvas: Initializing with config:', initialConfig);
+    console.log('WorkflowCanvas: Initial config nodes:', initialConfig.nodes);
+
+    lastConfigRef.current = initialConfig;
+    setWorkflowConfig(initialConfig);
+
+    if (initialConfig.nodes && initialConfig.nodes.length > 0) {
+      console.log('WorkflowCanvas: Processing nodes for ReactFlow...');
+
+      // Convert WorkflowConfig nodes to ReactFlow nodes
+      const reactFlowNodes: Node[] = initialConfig.nodes.map((node, index) => {
+        const reactFlowNode: Node = {
+          id: node.id,
+          type: node.type,
+          position: node.position || { x: 100 + index * 200, y: 100 },
+          data: {
+            id: node.id,
+            label: node.config?.name || `${node.type.charAt(0).toUpperCase()}${node.type.slice(1)} Node`,
+            config: node.config,
+            onConfig: handleNodeConfig,
+            onDelete: handleNodeDelete,
+          }
+        };
+
+        console.log(`WorkflowCanvas: Converted node ${node.id} to ReactFlow:`, reactFlowNode);
+        return reactFlowNode;
+      });
+
+      console.log('WorkflowCanvas: All ReactFlow nodes:', reactFlowNodes);
+
+      // Convert WorkflowConfig edges to ReactFlow edges
+      const reactFlowEdges: Edge[] = initialConfig.edges.map(edge => ({
+        id: `${edge.source}-${edge.target}`,
+        source: edge.source,
+        target: edge.target,
+        type: 'smoothstep',
+        animated: true,
+        style: { stroke: '#1173d4', strokeWidth: 2 }
+      }));
+
+      console.log('WorkflowCanvas: Setting nodes and edges in ReactFlow...');
+      setNodes(reactFlowNodes);
+      setEdges(reactFlowEdges);
+    } else {
+      console.log('WorkflowCanvas: No nodes in config, clearing ReactFlow...');
+      setNodes([]);
+      setEdges([]);
+    }
+
+    if (!initialized) {
+      setInitialized(true);
+    }
+  }, [initialConfig]);
+
+  // Only notify parent when nodes/edges change directly - no state sync
+  useEffect(() => {
+    if (!initialized) return;
+
+    // Create config directly from React Flow state without updating local state
+    const currentConfig: WorkflowConfig = {
       nodes: nodes.map((node) => ({
         id: node.id,
-        type: node.type,
+        type: node.type || 'default',
         position: node.position,
         config: node.data?.config || {}
       })),
@@ -390,32 +469,44 @@ export function WorkflowCanvas({ onConfigChange }: WorkflowCanvasProps) {
         source: edge.source,
         target: edge.target
       })),
+      properties: workflowConfig.properties,
       metadata: {
-        ...prev.metadata,
+        ...workflowConfig.metadata,
         updated: new Date().toISOString()
       }
-    }));
-  }, [nodes, edges]);
+    };
 
-  // Update parent component when config changes
-  useEffect(() => {
-    onConfigChange?.(workflowConfig);
+    // Notify parent directly without updating local state
+    onConfigChange?.(currentConfig);
 
-    // Log workflow changes to console
-    if (workflowConfig.nodes.length > 0 || workflowConfig.edges.length > 0) {
-      console.log('🔧 Workflow Updated:', {
-        nodes: workflowConfig.nodes.length,
-        edges: workflowConfig.edges.length,
-        timestamp: workflowConfig.metadata.updated,
-        config: workflowConfig
-      });
-    }
-  }, [workflowConfig, onConfigChange]);
+    console.log('🔧 Workflow Updated:', {
+      nodes: currentConfig.nodes.length,
+      edges: currentConfig.edges.length,
+      timestamp: currentConfig.metadata.updated
+    });
+  }, [nodes, edges, initialized, workflowConfig]);
 
   // Set initial viewport to prevent zoom issues
   const defaultViewport = { x: 0, y: 0, zoom: 0.8 };
 
   // Node configuration handlers
+  const handleNodeConfig = useCallback((nodeId: string, nodeType: string, nodeData: any) => {
+    setConfigModal({
+      isOpen: true,
+      nodeId,
+      nodeType,
+      nodeData,
+    });
+  }, []);
+
+  const handleNodeDelete = useCallback((nodeId: string) => {
+    console.log('WorkflowCanvas: Deleting node:', nodeId);
+    setNodes((nodes) => nodes.filter((node) => node.id !== nodeId));
+    setEdges((edges) => edges.filter((edge) =>
+      edge.source !== nodeId && edge.target !== nodeId
+    ));
+  }, [setNodes, setEdges]);
+
   const openNodeConfig = useCallback((nodeId: string, nodeType: string, nodeData: any) => {
     setConfigModal({
       isOpen: true,
@@ -459,7 +550,7 @@ export function WorkflowCanvas({ onConfigChange }: WorkflowCanvasProps) {
     });
 
     closeNodeConfig();
-  }, [configModal.nodeId, configModal.nodeType, setNodes, closeNodeConfig, nodes]);
+  }, [configModal.nodeId, configModal.nodeType, setNodes, closeNodeConfig]);
 
   // Workflow properties modal handlers
   const openPropertiesModal = useCallback(() => {
@@ -688,17 +779,19 @@ export function WorkflowCanvas({ onConfigChange }: WorkflowCanvasProps) {
           maskColor="rgba(26, 38, 51, 0.8)"
         />
 
-        {/* Empty state */}
+        {/* Enhanced empty state */}
         {nodes.length === 0 && (
-          <div className="absolute inset-0 flex items-center justify-center opacity-50 pointer-events-none z-10">
-            <div className="text-center p-8 border-2 border-dashed border-[#374151] rounded-lg bg-[#111a22]/80 backdrop-blur-sm">
-              <span className="material-symbols-outlined text-6xl text-gray-400 mb-4 block">add</span>
-              <p className="text-gray-400 mb-2">Drag a node here to start building</p>
-              <div className="text-xs text-gray-500 space-y-1">
-                <p>• Drag nodes from the sidebar</p>
-                <p>• Connect nodes by dragging from handles</p>
-                <p>• Delete with Del key or click X button</p>
-                <p>• Multi-select with Shift + click</p>
+          <div className="absolute inset-0 flex items-center justify-center opacity-70 pointer-events-none z-10">
+            <div className="text-center p-8 border-2 border-dashed border-[#374151] rounded-lg bg-[#111a22]/80 backdrop-blur-sm max-w-md">
+              <span className="material-symbols-outlined text-6xl text-gray-400 mb-4 block">account_tree</span>
+              <h3 className="text-white text-lg font-semibold mb-2">No Workflow Nodes</h3>
+              <p className="text-gray-400 mb-4">
+                This workflow doesn't have any nodes configured yet.
+              </p>
+              <div className="text-xs text-gray-500 space-y-1 text-left">
+                <p>• Add nodes by editing this workflow</p>
+                <p>• Drag from node palette to create workflow</p>
+                <p>• Connect: data sources → agents → outputs</p>
               </div>
             </div>
           </div>

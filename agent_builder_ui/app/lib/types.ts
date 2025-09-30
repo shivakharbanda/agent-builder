@@ -155,6 +155,7 @@ export interface Workflow extends BaseModel {
   project: number;
   project_name?: string;
   configuration: Record<string, any>;
+  status?: WorkflowStatus;
   properties?: WorkflowProperties;
   current_execution?: {
     id: number;
@@ -177,6 +178,7 @@ export interface WorkflowNode extends BaseModel {
   workflow?: number;
   node_type: NodeType;
   position: number;
+  visual_position?: { x: number; y: number };
   configuration: Record<string, any>;
   agent?: number;
   agent_name?: string;

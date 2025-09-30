@@ -361,6 +361,17 @@ class AgentBuilderAPI {
     return response.data;
   }
 
+  async saveCompleteWorkflow(data: {
+    name: string;
+    description: string;
+    project: number;
+    configuration: any;
+    properties: any;
+  }): Promise<Workflow> {
+    const response = await this.client.post<Workflow>('/workflows/save_complete/', data);
+    return response.data;
+  }
+
   async updateWorkflow(id: number, data: Partial<WorkflowCreate>): Promise<Workflow> {
     const response = await this.client.put<Workflow>(`/workflows/${id}/`, data);
     return response.data;

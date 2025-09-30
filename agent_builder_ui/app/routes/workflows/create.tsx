@@ -49,7 +49,7 @@ export default function CreateWorkflow() {
 
   // Form submission hook
   const { loading: saving, error: saveError, submit: submitWorkflow } = useFormSubmit(
-    async (data: any) => api.createWorkflow(data)
+    async (data: any) => api.saveCompleteWorkflow(data)
   );
 
   const handleConfigChange = (config: WorkflowConfig) => {
@@ -75,8 +75,8 @@ export default function CreateWorkflow() {
         return;
       }
 
-      // Prepare workflow data for API (without properties)
-      const workflowData = {
+      // Prepare complete workflow data for unified API
+      const completeWorkflowData = {
         name: workflowName,
         description: workflowDescription,
         project: 1, // TODO: Get from context or user selection
@@ -89,38 +89,22 @@ export default function CreateWorkflow() {
             description: workflowDescription,
             updated: new Date().toISOString()
           }
-          // Note: properties are handled separately now
-        }
+        },
+        properties: workflowConfig.properties
       };
 
-      console.log('Saving workflow:', workflowData);
+      console.log('Saving complete workflow:', completeWorkflowData);
 
-      // Submit workflow
-      const savedWorkflow = await submitWorkflow(workflowData);
+      // Single unified API call
+      const savedWorkflow = await submitWorkflow(completeWorkflowData);
 
       console.log('Workflow saved successfully:', savedWorkflow);
-
-      // Save workflow properties separately if any are configured
-      const hasProperties = Object.values(workflowConfig.properties).some(value =>
-        value !== '' && value !== null && value !== undefined
-      );
-
-      if (hasProperties) {
-        try {
-          console.log('Saving workflow properties:', workflowConfig.properties);
-          await api.updateWorkflowProperties(savedWorkflow.id, workflowConfig.properties);
-          console.log('Properties saved successfully');
-        } catch (propertiesError) {
-          console.warn('Failed to save properties, but workflow was created:', propertiesError);
-          // Don't fail the entire operation if properties fail to save
-        }
-      }
 
       // Navigate to the saved workflow
       navigate(`/workflows/${savedWorkflow.id}`);
     } catch (error) {
       console.error('Error saving workflow:', error);
-      // Error is already handled by the useFormSubmit hook
+      // Error is handled by useFormSubmit hook and displayed in UI
     }
   };
 

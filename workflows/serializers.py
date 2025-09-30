@@ -32,7 +32,7 @@ class WorkflowNodeSerializer(serializers.ModelSerializer):
     class Meta:
         model = WorkflowNode
         fields = [
-            'id', 'node_type', 'position', 'configuration', 'agent', 'agent_name',
+            'id', 'node_type', 'position', 'visual_position', 'configuration', 'agent', 'agent_name',
             'data_source', 'data_source_name', 'placeholder_mappings',
             'created_at', 'updated_at', 'is_active'
         ]
@@ -97,7 +97,13 @@ class WorkflowSerializer(serializers.ModelSerializer):
         return None
 
     def create(self, validated_data):
-        validated_data['created_by'] = self.context['request'].user
+        # created_by should be passed explicitly from the view
+        if 'created_by' not in validated_data:
+            # Fallback to context if available, but don't fail if missing
+            request = self.context.get('request')
+            if request and hasattr(request, 'user'):
+                validated_data['created_by'] = request.user
+
         workflow = super().create(validated_data)
 
         # Create default properties
