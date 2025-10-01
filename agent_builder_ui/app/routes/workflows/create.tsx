@@ -15,6 +15,7 @@ import { useFormSubmit } from '../../hooks/useAPI';
 import { api } from '../../lib/api';
 import { useToast } from '../../hooks/useToast';
 import { ToastContainer } from '../../components/ui/Toast';
+import { validateWorkflowConfig } from '../../lib/workflowConfigValidator';
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -53,6 +54,7 @@ export default function CreateWorkflow() {
   const [isLoadingWorkflow, setIsLoadingWorkflow] = useState(isEditMode);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [canvasKey, setCanvasKey] = useState(0);
   const { toasts, showToast, removeToast } = useToast();
 
   // Form submission hook - use different API based on mode
@@ -106,6 +108,44 @@ export default function CreateWorkflow() {
   const handleChatCommand = (command: string) => {
     // Handle chat commands here
     // You can extend this to parse commands and manipulate the workflow
+  };
+
+  // NEW: AI Workflow Config Handler
+  const handleWorkflowConfigComplete = (config: any) => {
+    console.log('AI Workflow Config:', config);
+
+    // Validate workflow structure
+    const validationResult = validateWorkflowConfig(config);
+
+    if (!validationResult.isValid) {
+      console.error('Workflow validation failed:', validationResult.errors);
+      showToast(`Configuration validation failed: ${validationResult.errors.join(', ')}`, 'error');
+      return;
+    }
+
+    const validatedConfig = validationResult.config!;
+
+    // Update config
+    setWorkflowConfig({
+      nodes: validatedConfig.nodes,
+      edges: validatedConfig.edges,
+      properties: validatedConfig.properties || workflowConfig.properties,
+      metadata: {
+        name: validatedConfig.name,
+        description: validatedConfig.description,
+        version: '1.0.0',
+        created: new Date().toISOString(),
+        updated: new Date().toISOString(),
+      }
+    });
+
+    setWorkflowName(validatedConfig.name);
+    setWorkflowDescription(validatedConfig.description);
+
+    // Force canvas remount to initialize with AI config
+    setCanvasKey(prev => prev + 1);
+
+    showToast('✨ Workflow structure created! Configure node details and save.', 'success');
   };
 
   const handleSaveWorkflow = async () => {
@@ -301,13 +341,17 @@ export default function CreateWorkflow() {
             </div>
 
             {/* Chat Interface */}
-            <ChatInterface onCommand={handleChatCommand} />
+            <ChatInterface
+              onCommand={handleChatCommand}
+              onWorkflowConfigComplete={handleWorkflowConfigComplete}
+            />
           </aside>
 
           {/* Main Canvas */}
           <main className="flex-grow bg-[#111a22] relative">
             <WorkflowErrorBoundary>
               <WorkflowCanvas
+                key={canvasKey}
                 onConfigChange={handleConfigChange}
                 initialConfig={workflowConfig}
                 isLoading={isLoadingWorkflow}

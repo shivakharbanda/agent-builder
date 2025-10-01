@@ -96,6 +96,62 @@ export const AGENT_BUILDER_CONFIG = {
   RESET_ENDPOINT: '/reset/',
 };
 
+// Workflow Builder AI Service configuration
+const getWorkflowBuilderUrl = (): string => {
+  // Check if we're in a browser environment
+  if (typeof window !== 'undefined') {
+    // Try environment variable first
+    const envUrl = import.meta.env?.REACT_APP_WORKFLOW_BUILDER_URL || import.meta.env?.VITE_WORKFLOW_BUILDER_URL;
+    if (envUrl) {
+      return envUrl;
+    }
+  }
+
+  // Server-side or fallback
+  try {
+    if (typeof process !== 'undefined' && process.env?.REACT_APP_WORKFLOW_BUILDER_URL) {
+      return process.env.REACT_APP_WORKFLOW_BUILDER_URL;
+    }
+  } catch (e) {
+    // process not available in browser
+  }
+
+  // Default fallback - port 8002 (different from agent builder on 8001)
+  return 'http://127.0.0.1:8002';
+};
+
+const getWorkflowBuilderTimeout = (): number => {
+  // Check if we're in a browser environment
+  if (typeof window !== 'undefined') {
+    const envTimeout = import.meta.env?.REACT_APP_WORKFLOW_BUILDER_TIMEOUT || import.meta.env?.VITE_WORKFLOW_BUILDER_TIMEOUT;
+    if (envTimeout) {
+      return parseInt(envTimeout);
+    }
+  }
+
+  // Server-side or fallback
+  try {
+    if (typeof process !== 'undefined' && process.env?.REACT_APP_WORKFLOW_BUILDER_TIMEOUT) {
+      return parseInt(process.env.REACT_APP_WORKFLOW_BUILDER_TIMEOUT);
+    }
+  } catch (e) {
+    // process not available in browser
+  }
+
+  // Default fallback
+  return 30000;
+};
+
+export const WORKFLOW_BUILDER_CONFIG = {
+  BASE_URL: getWorkflowBuilderUrl(),
+  TIMEOUT: getWorkflowBuilderTimeout(),
+  HEALTH_ENDPOINT: '/healthz',
+  SESSION_ENDPOINT: '/session/',
+  GENERATE_ENDPOINT: '/generate/',
+  GENERATE_FINALIZE_ENDPOINT: '/generate/finalize/',
+  RESET_ENDPOINT: '/reset/',
+};
+
 // Frontend configuration
 export const APP_CONFIG = {
   NAME: 'Agent Builder',
@@ -117,6 +173,7 @@ export default {
   API_CONFIG,
   HEALTH_CHECK_CONFIG,
   AGENT_BUILDER_CONFIG,
+  WORKFLOW_BUILDER_CONFIG,
   APP_CONFIG,
   FEATURES,
 };
