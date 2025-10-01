@@ -12,6 +12,8 @@ import type { AgentCompleteCreate, PromptCreateData, ReturnType, Tool } from '..
 import { isValidJSON } from '../../lib/utils';
 import { ChatInterface } from '../../components/agent-builder/ChatInterface';
 import { validateAndTransformConfig } from '../../lib/agentConfigValidator';
+import { ToastContainer } from '../../components/ui/Toast';
+import { useToast } from '../../hooks/useToast';
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -45,8 +47,10 @@ export default function CreateAgent() {
   const navigate = useNavigate();
   const { data: projects, loading: projectsLoading } = useProjects();
   const { data: tools, loading: toolsLoading } = useTools();
+  const { toasts, showToast, removeToast } = useToast();
 
   const [builderMode, setBuilderMode] = useState<BuilderMode>('ai');
+  const [formHighlight, setFormHighlight] = useState(false);
   const [formData, setFormData] = useState<FormData>({
     name: '',
     description: '',
@@ -192,7 +196,7 @@ export default function CreateAgent() {
 
     if (!validationResult.isValid) {
       console.error('Configuration validation failed:', validationResult.errors);
-      alert(`Configuration validation failed:\n${validationResult.errors.join('\n')}`);
+      showToast('Configuration validation failed. Please try again.', 'error');
       return;
     }
 
@@ -219,8 +223,19 @@ export default function CreateAgent() {
       })));
     }
 
-    // Switch to manual mode to show the populated form
+    // Switch to manual mode with visual feedback
     setBuilderMode('manual');
+    setFormHighlight(true);
+
+    // Show additional toast after switching
+    setTimeout(() => {
+      showToast('Review your agent configuration and click Create!', 'info');
+    }, 800);
+
+    // Remove highlight after animation
+    setTimeout(() => {
+      setFormHighlight(false);
+    }, 2000);
   };
 
   const handleSwitchToManual = () => {
@@ -289,6 +304,7 @@ export default function CreateAgent() {
               onAgentConfigComplete={handleAgentConfigComplete}
               onSwitchToManual={handleSwitchToManual}
               selectedProject={formData.project}
+              onShowToast={showToast}
             />
           </div>
         )}
@@ -297,7 +313,7 @@ export default function CreateAgent() {
         {builderMode === 'manual' && (
           <div className="mx-auto max-w-2xl px-4 sm:px-6 lg:px-8 py-8">
 
-        <form onSubmit={handleSubmit} className="space-y-8">
+        <form onSubmit={handleSubmit} className={`space-y-8 transition-all duration-500 ${formHighlight ? 'ring-2 ring-[#1173d4] ring-opacity-50 shadow-lg shadow-[#1173d4]/20 rounded-lg p-6' : ''}`}>
           {/* Basic Information */}
           <div className="space-y-6">
             <Input
@@ -443,6 +459,9 @@ export default function CreateAgent() {
           </div>
         )}
       </div>
+
+      {/* Toast Notifications */}
+      <ToastContainer toasts={toasts} onRemove={removeToast} />
     </Layout>
   );
 }

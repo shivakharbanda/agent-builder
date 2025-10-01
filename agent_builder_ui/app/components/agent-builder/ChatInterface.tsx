@@ -10,18 +10,39 @@ interface ChatInterfaceProps {
   onAgentConfigComplete?: (config: any) => void;
   onSwitchToManual?: () => void;
   selectedProject?: number;
+  onShowToast?: (message: string, type?: 'success' | 'error' | 'info' | 'warning') => void;
 }
 
-export function ChatInterface({ onAgentConfigComplete, onSwitchToManual, selectedProject }: ChatInterfaceProps) {
+export function ChatInterface({ onAgentConfigComplete, onSwitchToManual, selectedProject, onShowToast }: ChatInterfaceProps) {
   const { session, createSession, sendMessage, resetSession, checkFinalization } = useAgentBuilder();
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
+  const prevCompleteState = useRef(false);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [session.messages]);
+
+  // Auto-trigger completion when finalization happens
+  useEffect(() => {
+    if (session.isComplete && !prevCompleteState.current && session.finalConfig) {
+      prevCompleteState.current = true;
+
+      // Show success toast
+      onShowToast?.('🎉 Agent configuration ready!', 'success');
+
+      // Auto-trigger the config completion after a short delay
+      setTimeout(() => {
+        if (onAgentConfigComplete) {
+          onAgentConfigComplete(session.finalConfig);
+        }
+      }, 500);
+    } else if (!session.isComplete) {
+      prevCompleteState.current = false;
+    }
+  }, [session.isComplete, session.finalConfig, onAgentConfigComplete, onShowToast]);
 
   // Initialize chat session
   const createNewSession = async () => {

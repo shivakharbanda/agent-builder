@@ -94,7 +94,7 @@ SYSTEM_PROMPT = (
 # Generator system prompt for focused conversational agent creation
 GENERATOR_PROMPT = (
     "You are an expert agent configurator that helps users create agent configurations through focused questions.\n\n"
-    "GOAL: Ask targeted questions to understand what the user wants, then generate the complete agent config JSON.\n\n"
+    "GOAL: Ask targeted questions to understand what the user wants, present a preview, get confirmation, then output the JSON config.\n\n"
     "CONVERSATION FLOW:\n"
     "1) User gives initial requirement/use case\n"
     "2) Ask clarifying questions ONLY about unclear or missing details:\n"
@@ -102,19 +102,34 @@ GENERATOR_PROMPT = (
     "   - What's the context/domain?\n"
     "   - Are there specific constraints or requirements?\n"
     "   - Should it return structured data or conversational responses?\n"
-    "3) When you have enough info, generate the final JSON config\n\n"
+    "3) When you have enough info, present a clear preview and ask for confirmation\n"
+    "4) ONLY after user confirms (yes/okay/looks good/etc), output the raw JSON\n\n"
     "QUESTION STRATEGY:\n"
     "- Ask 1-3 focused questions max\n"
     "- Be direct and specific\n"
     "- Make reasonable assumptions when possible\n"
     "- Don't ask about obvious things\n\n"
-    "WHEN TO FINALIZE:\n"
-    "Generate the config when you understand:\n"
+    "WHEN TO PRESENT PREVIEW:\n"
+    "Present preview when you understand:\n"
     "- The core use case/purpose\n"
     "- Input/output requirements\n"
     "- Whether structured or conversational output is needed\n\n"
-    "FINAL OUTPUT:\n"
-    "When ready, output ONLY a JSON object (no code fences, no commentary):\n"
+    "PREVIEW FORMAT:\n"
+    "Present the configuration clearly:\n"
+    "---\n"
+    "Perfect! I'll create an agent with this configuration:\n\n"
+    "**Agent Name:** [name]\n"
+    "**Description:** [description]\n"
+    "**Return Type:** [structured/unstructured]\n"
+    "**Input:** [what user provides]\n"
+    "**Output:** [what agent returns]\n"
+    "---\n"
+    "Does this look good? Should I proceed with this configuration?\n\n"
+    "CONFIRMATION DETECTION:\n"
+    "If user responds affirmatively (yes, okay, ok, sure, looks good, perfect, go ahead, proceed, etc.),\n"
+    "IMMEDIATELY output ONLY the raw JSON with NO additional text.\n\n"
+    "FINAL OUTPUT (only after user confirmation):\n"
+    "Output ONLY the JSON object (no markdown, no code fences, no extra text):\n"
     "{\n"
     '  \"name\": string,\n'
     '  \"description\": string,\n'
@@ -125,7 +140,8 @@ GENERATOR_PROMPT = (
     "  ],\n"
     '  \"schema_definition\": object   // ONLY if return_type==\"structured\"\n'
     "}\n\n"
-    "Include placeholders map for each prompt: {\"key\": \"description of what to provide\"}.\n"
+    "IMPORTANT: Use double curly braces {{placeholder_name}} for placeholders in prompt content.\n"
+    "Include placeholders map: {\"key\": \"description of what to provide\"}.\n"
     "For structured agents, create practical JSON Schema with type='object', properties, required fields."
 )
 
@@ -215,12 +231,46 @@ def to_chat_message(m: ModelMessage) -> Dict[str, str]:
     raise UnexpectedModelBehavior("Unexpected message type for chat app")
 
 
-# Grab the last JSON object from text (no code fences), forgiving whitespace.
-JSON_RE = re.compile(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}\s*$", re.DOTALL)
+def extract_and_validate_json(text: str) -> dict | None:
+    """
+    Deterministically extract and validate JSON from text.
+    Handles both raw JSON and markdown code fence wrapped JSON.
+    Returns parsed dict if valid agent config, None otherwise.
+    """
+    if not text:
+        return None
 
-def extract_last_json(text: str) -> str | None:
-    m = JSON_RE.search(text.strip())
-    return m.group(0) if m else None
+    candidate = text.strip()
+
+    # Handle markdown code fences
+    if candidate.startswith('```'):
+        lines = candidate.split('\n')
+        if len(lines) >= 3:  # Need at least opening fence, content, closing fence
+            # Remove first line (```json or ```) and last line (```)
+            candidate = '\n'.join(lines[1:-1]).strip()
+
+    # Try to parse as JSON
+    try:
+        payload = json.loads(candidate)
+
+        # Validate it's an agent config with required fields
+        if not isinstance(payload, dict):
+            return None
+
+        # Check required fields
+        if not (isinstance(payload.get("name"), str) and payload["name"].strip()):
+            return None
+        if not (isinstance(payload.get("description"), str) and payload["description"].strip()):
+            return None
+        if payload.get("return_type") not in ("structured", "unstructured"):
+            return None
+        if not (isinstance(payload.get("prompts"), list) and len(payload["prompts"]) >= 2):
+            return None
+
+        return payload
+
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return None
 
 
 PLACEHOLDER_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
@@ -315,51 +365,37 @@ async def generate_chat(body: GenerateSessionRequest) -> StreamingResponse:
 async def generate_finalize(session_id: str) -> Response:
     """
     Attempts to parse the last assistant message from generator conversation as the final JSON config.
-    Returns 202 if not finalized yet.
+    Returns 202 if not finalized yet, 200 with JSON if valid config found.
     """
     messages = await load_messages(session_id)
     if not messages:
         return Response("Not finalized yet.", media_type="text/plain", status_code=202)
 
-    # Find last assistant text and try to parse a trailing JSON object.
-    last_text = ""
+    # Find last assistant message and try to extract valid JSON
     for m in reversed(messages):
         if isinstance(m, ModelResponse) and isinstance(m.parts[0], TextPart):
             candidate = m.parts[0].content
-            obj = extract_last_json(candidate)
-            if obj:
-                last_text = obj
-                break
+            payload = extract_and_validate_json(candidate)
 
-    if not last_text:
-        return Response("Not finalized yet.", media_type="text/plain", status_code=202)
+            if payload:
+                # Ensure placeholders maps exist (safety net)
+                payload = ensure_placeholders(payload)
 
-    try:
-        payload = json.loads(last_text)
+                # If structured, validate schema_definition
+                if payload["return_type"] == "structured":
+                    schema = payload.get("schema_definition")
+                    if not isinstance(schema, dict) or schema.get("type") != "object" or "properties" not in schema:
+                        return Response(
+                            "Final JSON is present but schema_definition is missing/invalid.",
+                            media_type="text/plain",
+                            status_code=422,
+                        )
 
-        # Minimal shape checks.
-        assert isinstance(payload.get("name"), str) and payload["name"].strip()
-        assert isinstance(payload.get("description"), str) and payload["description"].strip()
-        assert payload.get("return_type") in ("structured", "unstructured")
-        assert isinstance(payload.get("prompts"), list) and len(payload["prompts"]) >= 2
+                # Valid config found
+                return Response(json.dumps(payload, indent=2), media_type="application/json")
 
-        # Ensure placeholders maps exist (safety net).
-        payload = ensure_placeholders(payload)
-
-        # If structured, make sure schema_definition exists and looks like an object schema.
-        if payload["return_type"] == "structured":
-            schema = payload.get("schema_definition")
-            if not isinstance(schema, dict) or schema.get("type") != "object" or "properties" not in schema:
-                return Response(
-                    "Final JSON is present but schema_definition is missing/invalid.",
-                    media_type="text/plain",
-                    status_code=422,
-                )
-
-        return Response(json.dumps(payload, indent=2), media_type="application/json")
-
-    except Exception:
-        return Response("Not finalized yet.", media_type="text/plain", status_code=202)
+    # No valid config found in any message
+    return Response("Not finalized yet.", media_type="text/plain", status_code=202)
 
 
 @app.post("/reset/")
@@ -407,48 +443,34 @@ async def post_chat(body: ChatRequest) -> StreamingResponse:
 async def finalize(session_id: str) -> Response:
     """
     Attempts to parse the last assistant message as the final JSON config.
-    Returns 202 if not finalized yet.
+    Returns 202 if not finalized yet, 200 with JSON if valid config found.
     """
     messages = await load_messages(session_id)
     if not messages:
         return Response("Not finalized yet.", media_type="text/plain", status_code=202)
 
-    # Find last assistant text and try to parse a trailing JSON object.
-    last_text = ""
+    # Find last assistant message and try to extract valid JSON
     for m in reversed(messages):
         if isinstance(m, ModelResponse) and isinstance(m.parts[0], TextPart):
             candidate = m.parts[0].content
-            obj = extract_last_json(candidate)
-            if obj:
-                last_text = obj
-                break
+            payload = extract_and_validate_json(candidate)
 
-    if not last_text:
-        return Response("Not finalized yet.", media_type="text/plain", status_code=202)
+            if payload:
+                # Ensure placeholders maps exist (safety net)
+                payload = ensure_placeholders(payload)
 
-    try:
-        payload = json.loads(last_text)
+                # If structured, validate schema_definition
+                if payload["return_type"] == "structured":
+                    schema = payload.get("schema_definition")
+                    if not isinstance(schema, dict) or schema.get("type") != "object" or "properties" not in schema:
+                        return Response(
+                            "Final JSON is present but schema_definition is missing/invalid.",
+                            media_type="text/plain",
+                            status_code=422,
+                        )
 
-        # Minimal shape checks.
-        assert isinstance(payload.get("name"), str) and payload["name"].strip()
-        assert isinstance(payload.get("description"), str) and payload["description"].strip()
-        assert payload.get("return_type") in ("structured", "unstructured")
-        assert isinstance(payload.get("prompts"), list) and len(payload["prompts"]) >= 2
+                # Valid config found
+                return Response(json.dumps(payload, indent=2), media_type="application/json")
 
-        # Ensure placeholders maps exist (safety net).
-        payload = ensure_placeholders(payload)
-
-        # If structured, make sure schema_definition exists and looks like an object schema.
-        if payload["return_type"] == "structured":
-            schema = payload.get("schema_definition")
-            if not isinstance(schema, dict) or schema.get("type") != "object" or "properties" not in schema:
-                return Response(
-                    "Final JSON is present but schema_definition is missing/invalid.",
-                    media_type="text/plain",
-                    status_code=422,
-                )
-
-        return Response(json.dumps(payload, indent=2), media_type="application/json")
-
-    except Exception:
-        return Response("Not finalized yet.", media_type="text/plain", status_code=202)
+    # No valid config found in any message
+    return Response("Not finalized yet.", media_type="text/plain", status_code=202)
