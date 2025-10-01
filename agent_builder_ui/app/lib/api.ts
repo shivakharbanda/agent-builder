@@ -574,6 +574,13 @@ class AgentBuilderAPI {
   async refreshToken(): Promise<void> {
     await this.client.post('/auth/token/refresh/');
   }
+
+  // Workflow Execution API
+  async executeWorkflow(workflowId: number, nodeId?: number): Promise<any> {
+    const data = nodeId ? { node_id: nodeId } : {};
+    const response = await this.client.post(`/workflows/${workflowId}/execute/`, data);
+    return response.data;
+  }
 }
 
 // Create and export a singleton instance

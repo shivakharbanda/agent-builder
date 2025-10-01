@@ -23,6 +23,7 @@ interface WorkflowCanvasProps {
   onConfigChange?: (config: WorkflowConfig) => void;
   initialConfig?: WorkflowConfig;
   isLoading?: boolean;
+  onExecuteNode?: (nodeId: string) => void;
 }
 
 // Custom node components
@@ -37,6 +38,17 @@ function DatabaseNode({ data, selected }: { data: any; selected: boolean }) {
           <h4 className="font-semibold text-white">{data.label || 'Database'}</h4>
         </div>
         <div className="flex space-x-1">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              console.log('Execute node:', { action: 'execute_node', nodeId: data.id, nodeType: 'database', config: data.config });
+              data.onExecute?.(data.id, 'database', data);
+            }}
+            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-green-400 transition-opacity"
+            title="Execute node"
+          >
+            <span className="material-symbols-outlined text-sm">play_arrow</span>
+          </button>
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -85,6 +97,17 @@ function AgentNode({ data, selected }: { data: any; selected: boolean }) {
           <h4 className="font-semibold text-white">{data.label || 'Agent'}</h4>
         </div>
         <div className="flex space-x-1">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              console.log('Execute node:', { action: 'execute_node', nodeId: data.id, nodeType: 'agent', config: data.config });
+              data.onExecute?.(data.id, 'agent', data);
+            }}
+            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-green-400 transition-opacity"
+            title="Execute node"
+          >
+            <span className="material-symbols-outlined text-sm">play_arrow</span>
+          </button>
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -142,6 +165,17 @@ function OutputNode({ data, selected }: { data: any; selected: boolean }) {
           <button
             onClick={(e) => {
               e.stopPropagation();
+              console.log('Execute node:', { action: 'execute_node', nodeId: data.id, nodeType: 'output', config: data.config });
+              data.onExecute?.(data.id, 'output', data);
+            }}
+            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-green-400 transition-opacity"
+            title="Execute node"
+          >
+            <span className="material-symbols-outlined text-sm">play_arrow</span>
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
               data.onConfig?.(data.id, 'output', data);
             }}
             className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-[#1173d4] transition-opacity"
@@ -191,6 +225,17 @@ function FilterNode({ data, selected }: { data: any; selected: boolean }) {
           <h4 className="font-semibold text-white">{data.label || 'Filter'}</h4>
         </div>
         <div className="flex space-x-1">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              console.log('Execute node:', { action: 'execute_node', nodeId: data.id, nodeType: 'filter', config: data.config });
+              data.onExecute?.(data.id, 'filter', data);
+            }}
+            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-green-400 transition-opacity"
+            title="Execute node"
+          >
+            <span className="material-symbols-outlined text-sm">play_arrow</span>
+          </button>
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -244,15 +289,29 @@ function ScriptNode({ data, selected }: { data: any; selected: boolean }) {
           <span className="material-symbols-outlined text-[#1173d4] mr-2 text-xl">code</span>
           <h4 className="font-semibold text-white">{data.label || 'Script'}</h4>
         </div>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            data.onDelete?.(data.id);
-          }}
-          className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-400 transition-opacity"
-        >
-          <span className="material-symbols-outlined text-sm">close</span>
-        </button>
+        <div className="flex space-x-1">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              console.log('Execute node:', { action: 'execute_node', nodeId: data.id, nodeType: 'script', config: data.config });
+              data.onExecute?.(data.id, 'script', data);
+            }}
+            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-green-400 transition-opacity"
+            title="Execute node"
+          >
+            <span className="material-symbols-outlined text-sm">play_arrow</span>
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              data.onDelete?.(data.id);
+            }}
+            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-400 transition-opacity"
+            title="Delete node"
+          >
+            <span className="material-symbols-outlined text-sm">close</span>
+          </button>
+        </div>
       </div>
       <p className="text-xs text-gray-400">Runs custom Python or JavaScript code.</p>
       {data.config?.script && (
@@ -285,15 +344,29 @@ function ConditionalNode({ data, selected }: { data: any; selected: boolean }) {
           <span className="material-symbols-outlined text-[#1173d4] mr-2 text-xl">fork_right</span>
           <h4 className="font-semibold text-white">{data.label || 'Conditional'}</h4>
         </div>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            data.onDelete?.(data.id);
-          }}
-          className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-400 transition-opacity"
-        >
-          <span className="material-symbols-outlined text-sm">close</span>
-        </button>
+        <div className="flex space-x-1">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              console.log('Execute node:', { action: 'execute_node', nodeId: data.id, nodeType: 'conditional', config: data.config });
+              data.onExecute?.(data.id, 'conditional', data);
+            }}
+            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-green-400 transition-opacity"
+            title="Execute node"
+          >
+            <span className="material-symbols-outlined text-sm">play_arrow</span>
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              data.onDelete?.(data.id);
+            }}
+            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-400 transition-opacity"
+            title="Delete node"
+          >
+            <span className="material-symbols-outlined text-sm">close</span>
+          </button>
+        </div>
       </div>
       <p className="text-xs text-gray-400">Branches workflow based on conditions.</p>
       {data.config?.condition && (
@@ -335,7 +408,7 @@ const nodeTypes = {
   conditional: ConditionalNode,
 };
 
-export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading }: WorkflowCanvasProps) {
+export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExecuteNode }: WorkflowCanvasProps) {
   // React Flow manages node/edge arrays internally
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -422,6 +495,7 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading }: Wor
             config: node.config,
             onConfig: handleNodeConfig,
             onDelete: handleNodeDelete,
+            onExecute: onExecuteNode,
           }
         };
 
@@ -627,6 +701,7 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading }: Wor
           onDelete: deleteNode,
           onConfig: openNodeConfig,
           onConfigChange: updateNodeConfig,
+          onExecute: onExecuteNode,
           id: nodeId,
           config: getDefaultConfig(type)
         },

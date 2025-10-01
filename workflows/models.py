@@ -151,3 +151,78 @@ class OutputNode(BaseModel):
 
     class Meta:
         db_table = 'workflows_output_node'
+
+
+# ============================================================================
+# Node Registry Models
+# ============================================================================
+
+class NodeCategory(BaseModel):
+    """
+    Node categories for organizing node types.
+
+    Examples: data_source, processor, data_sink, control_flow
+    """
+    name = models.CharField(max_length=100, unique=True, help_text="Category identifier (e.g., data_source)")
+    description = models.TextField(blank=True, help_text="Description of what this category represents")
+    icon = models.CharField(max_length=50, blank=True, help_text="Icon identifier for UI")
+
+    def __str__(self):
+        return self.name
+
+    class Meta:
+        db_table = 'workflows_node_category'
+        ordering = ['name']
+        verbose_name_plural = 'Node Categories'
+
+
+class NodeType(BaseModel):
+    """
+    Node type definitions with handler class mappings.
+
+    Stores metadata about each node type including:
+    - Which handler class to instantiate
+    - Display information (name, description, icon)
+    - Category classification
+
+    Examples:
+        - database → DatabaseNode handler
+        - agent → AgentNode handler
+        - output → OutputNode handler
+
+    TODO: Future expansions:
+        - Add NodeConfigField model for dynamic field definitions
+        - Add NodeInputOutput model for input/output specifications
+        - Replace nodeConfigs.json with database-driven node definitions
+    """
+    category = models.ForeignKey(
+        NodeCategory,
+        on_delete=models.CASCADE,
+        related_name='node_types',
+        help_text="Category this node type belongs to"
+    )
+    type_name = models.CharField(
+        max_length=100,
+        unique=True,
+        help_text="Type identifier (e.g., database, agent)"
+    )
+    type_description = models.TextField(
+        blank=True,
+        help_text="Description of what this node type does"
+    )
+    icon = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="Icon identifier for UI"
+    )
+    handler_class_name = models.CharField(
+        max_length=200,
+        help_text="Python class name of the node handler (e.g., DatabaseNode, AgentNode)"
+    )
+
+    def __str__(self):
+        return f"{self.type_name} ({self.category.name})"
+
+    class Meta:
+        db_table = 'workflows_node_type'
+        ordering = ['category', 'type_name']

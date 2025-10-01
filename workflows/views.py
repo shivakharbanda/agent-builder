@@ -7,6 +7,7 @@ from .serializers import (
     DataSourceSerializer, WorkflowSerializer, WorkflowListSerializer, WorkflowPropertiesSerializer, WorkflowExecutionSerializer,
     WorkflowNodeSerializer, PlaceholderMappingSerializer, OutputNodeSerializer
 )
+from .execution.handler import WorkflowHandler
 
 
 class DataSourceViewSet(viewsets.ModelViewSet):
@@ -79,6 +80,89 @@ class WorkflowViewSet(viewsets.ModelViewSet):
                 serializer.save(workflow=workflow, created_by=request.user)
                 return Response(serializer.data, status=201)
             return Response(serializer.errors, status=400)
+
+    @action(detail=True, methods=['post'])
+    def execute(self, request, pk=None):
+        """Execute workflow or a specific node within the workflow
+
+        Request body:
+        - {} - Execute full workflow
+        - {"node_id": <id>} - Execute specific node only
+        """
+        from django.utils import timezone
+
+        workflow = self.get_object()
+        node_id = request.data.get('node_id')
+
+        # Initialize WorkflowHandler to get complete workflow configuration
+        try:
+            handler = WorkflowHandler(workflow_id=workflow.id)
+            workflow_config = handler.get_workflow_config()
+        except Exception as e:
+            return Response({
+                'detail': f'Error loading workflow configuration: {str(e)}'
+            }, status=500)
+
+        # Validate node if node_id is provided
+        if node_id:
+            try:
+                node = WorkflowNode.objects.get(id=node_id, workflow=workflow, is_active=True)
+                # Single node execution mode
+                response_data = {
+                    'execution_id': 124,  # Hardcoded for now
+                    'workflow_id': workflow.id,
+                    'workflow_name': workflow.name,
+                    'node_id': node.id,
+                    'node_type': node.node_type,
+                    'node_position': node.position,
+                    'status': 'running',
+                    'mode': 'single_node',
+                    'started_at': timezone.now().isoformat(),
+                    'message': f'Node execution started successfully for {node.node_type} node at position {node.position}',
+                    'estimated_duration': '30 seconds',
+                    'configuration': node.configuration,
+                    'workflow_handler': {
+                        'total_nodes': len(workflow_config['nodes']),
+                        'total_edges': len(workflow_config['edges']),
+                        'workflow_properties': workflow_config['properties']
+                    }
+                }
+                return Response(response_data, status=202)
+            except WorkflowNode.DoesNotExist:
+                return Response({
+                    'detail': f'Node with id {node_id} not found in workflow {workflow.id}'
+                }, status=404)
+        else:
+            # Full workflow execution mode
+            nodes = WorkflowNode.objects.filter(workflow=workflow, is_active=True).order_by('position')
+
+            response_data = {
+                'execution_id': 123,  # Hardcoded for now
+                'workflow_id': workflow.id,
+                'workflow_name': workflow.name,
+                'status': 'running',
+                'mode': 'full_workflow',
+                'started_at': timezone.now().isoformat(),
+                'message': 'Workflow execution started successfully',
+                'total_nodes': len(workflow_config['nodes']),
+                'nodes_to_execute': [node.id for node in nodes],
+                'node_types': [node.node_type for node in nodes],
+                'estimated_duration': '5 minutes',
+                'execution_order': [
+                    {
+                        'position': node.position,
+                        'node_id': node.id,
+                        'node_type': node.node_type
+                    }
+                    for node in nodes
+                ],
+                'workflow_handler': {
+                    'configuration': workflow_config['configuration'],
+                    'properties': workflow_config['properties'],
+                    'project_name': workflow_config['project_name']
+                }
+            }
+            return Response(response_data, status=202)
 
     @action(detail=False, methods=['post'])
     def save_complete(self, request):

@@ -9,6 +9,8 @@ import { APIErrorBoundary } from '../../components/ui/ErrorBoundary';
 import { useWorkflow } from '../../hooks/useAPI';
 import { formatRelativeTime } from '../../lib/utils';
 import { api } from '../../lib/api';
+import { useToast } from '../../hooks/useToast';
+import { ToastContainer } from '../../components/ui/Toast';
 
 // Simple React Flow Canvas for viewing only
 import {
@@ -111,6 +113,7 @@ export default function WorkflowDetail() {
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [deleting, setDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const { toasts, showToast, removeToast } = useToast();
 
   const handleDelete = async () => {
     try {
@@ -282,7 +285,21 @@ export default function WorkflowDetail() {
                 >
                   Delete
                 </Button>
-                <Button>Run Workflow</Button>
+                <Button
+                  onClick={async () => {
+                    try {
+                      const result = await api.executeWorkflow(workflow.id);
+                      showToast('Workflow execution started', 'success');
+                      console.log('Execution result:', result);
+                    } catch (error) {
+                      showToast('Failed to execute workflow', 'error');
+                      console.error('Execution error:', error);
+                    }
+                  }}
+                  leftIcon={<span className="material-symbols-outlined text-base">play_arrow</span>}
+                >
+                  Run Workflow
+                </Button>
               </div>
             </div>
           </div>
@@ -423,6 +440,9 @@ export default function WorkflowDetail() {
           </div>
         )}
       </APIErrorBoundary>
+
+      {/* Toast Notifications */}
+      <ToastContainer toasts={toasts} onRemove={removeToast} />
     </Layout>
   );
 }

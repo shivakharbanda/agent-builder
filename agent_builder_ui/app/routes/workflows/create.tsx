@@ -13,6 +13,8 @@ import { ConfigViewer } from '../../components/workflow/ConfigViewer';
 import { WorkflowErrorBoundary } from '../../components/ui/ErrorBoundary';
 import { useFormSubmit } from '../../hooks/useAPI';
 import { api } from '../../lib/api';
+import { useToast } from '../../hooks/useToast';
+import { ToastContainer } from '../../components/ui/Toast';
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -50,6 +52,8 @@ export default function CreateWorkflow() {
   const [showConfig, setShowConfig] = useState(false);
   const [isLoadingWorkflow, setIsLoadingWorkflow] = useState(isEditMode);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const { toasts, showToast, removeToast } = useToast();
 
   // Form submission hook - use different API based on mode
   const { loading: saving, error: saveError, submit: submitWorkflow } = useFormSubmit(
@@ -96,6 +100,7 @@ export default function CreateWorkflow() {
   const handleConfigChange = (config: WorkflowConfig) => {
     if (isLoadingWorkflow) return; // Skip during initial load
     setWorkflowConfig(config);
+    setHasUnsavedChanges(true);
   };
 
   const handleChatCommand = (command: string) => {
@@ -152,6 +157,9 @@ export default function CreateWorkflow() {
       // API call (create or update)
       const savedWorkflow = await submitWorkflow(workflowData);
 
+      // Reset unsaved changes flag after successful save
+      setHasUnsavedChanges(false);
+
       // Navigate based on mode
       if (isEditMode) {
         // Stay on edit page - show success toast
@@ -163,6 +171,44 @@ export default function CreateWorkflow() {
       }
     } catch (error) {
       // Error is handled by useFormSubmit hook and displayed in UI
+    }
+  };
+
+  const handleExecuteWorkflow = async () => {
+    if (!isEditMode) {
+      showToast('Please save the workflow before executing', 'warning');
+      return;
+    }
+    if (hasUnsavedChanges) {
+      showToast('Please save your changes before executing', 'warning');
+      return;
+    }
+    try {
+      const result = await api.executeWorkflow(Number(params.id));
+      showToast('Workflow execution started', 'success');
+      console.log('Execution result:', result);
+    } catch (error) {
+      showToast('Failed to execute workflow', 'error');
+      console.error('Execution error:', error);
+    }
+  };
+
+  const handleExecuteNode = async (nodeId: string) => {
+    if (!isEditMode) {
+      showToast('Please save the workflow before executing nodes', 'warning');
+      return;
+    }
+    if (hasUnsavedChanges) {
+      showToast('Please save your changes before executing', 'warning');
+      return;
+    }
+    try {
+      const result = await api.executeWorkflow(Number(params.id), Number(nodeId));
+      showToast('Node execution started', 'success');
+      console.log('Node execution result:', result);
+    } catch (error) {
+      showToast('Failed to execute node', 'error');
+      console.error('Node execution error:', error);
     }
   };
 
@@ -206,6 +252,16 @@ export default function CreateWorkflow() {
               <Button variant="outline" asChild disabled={saving}>
                 <Link to="/workflows">Cancel</Link>
               </Button>
+              {isEditMode && (
+                <Button
+                  variant="outline"
+                  onClick={handleExecuteWorkflow}
+                  disabled={saving}
+                  leftIcon={<span className="material-symbols-outlined text-base">play_arrow</span>}
+                >
+                  Execute Workflow
+                </Button>
+              )}
               <Button onClick={handleSaveWorkflow} disabled={saving}>
                 {saving ? (
                   <>
@@ -251,7 +307,12 @@ export default function CreateWorkflow() {
           {/* Main Canvas */}
           <main className="flex-grow bg-[#111a22] relative">
             <WorkflowErrorBoundary>
-              <WorkflowCanvas onConfigChange={handleConfigChange} initialConfig={workflowConfig} isLoading={isLoadingWorkflow} />
+              <WorkflowCanvas
+                onConfigChange={handleConfigChange}
+                initialConfig={workflowConfig}
+                isLoading={isLoadingWorkflow}
+                onExecuteNode={handleExecuteNode}
+              />
             </WorkflowErrorBoundary>
           </main>
 
@@ -279,6 +340,9 @@ export default function CreateWorkflow() {
           </div>
         </div>
       )}
+
+      {/* Toast Notifications */}
+      <ToastContainer toasts={toasts} onRemove={removeToast} />
     </Layout>
   );
 }
