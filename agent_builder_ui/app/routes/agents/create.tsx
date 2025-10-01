@@ -10,6 +10,8 @@ import { useProjects, useTools, useFormSubmit } from '../../hooks/useAPI';
 import { api } from '../../lib/api';
 import type { AgentCompleteCreate, PromptCreateData, ReturnType, Tool } from '../../lib/types';
 import { isValidJSON } from '../../lib/utils';
+import { ChatInterface } from '../../components/agent-builder/ChatInterface';
+import { validateAndTransformConfig } from '../../lib/agentConfigValidator';
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -37,11 +39,14 @@ interface FormData {
   user_prompt_placeholders: Record<string, string>;
 }
 
+type BuilderMode = 'manual' | 'ai';
+
 export default function CreateAgent() {
   const navigate = useNavigate();
   const { data: projects, loading: projectsLoading } = useProjects();
   const { data: tools, loading: toolsLoading } = useTools();
 
+  const [builderMode, setBuilderMode] = useState<BuilderMode>('ai');
   const [formData, setFormData] = useState<FormData>({
     name: '',
     description: '',
@@ -171,6 +176,57 @@ export default function CreateAgent() {
     return iconMap[toolType] || iconMap.default;
   };
 
+  // AI Chat handlers
+  const handleAgentConfigComplete = (config: any) => {
+    console.log('AI Agent Config:', config);
+
+    // Get selected tools
+    const selectedToolIds = selectedTools.filter(t => t.selected).map(t => t.id);
+
+    // Validate and transform the configuration
+    const validationResult = validateAndTransformConfig(
+      config,
+      formData.project,
+      selectedToolIds
+    );
+
+    if (!validationResult.isValid) {
+      console.error('Configuration validation failed:', validationResult.errors);
+      alert(`Configuration validation failed:\n${validationResult.errors.join('\n')}`);
+      return;
+    }
+
+    const validatedConfig = validationResult.config!;
+
+    // Populate form data from AI chat configuration
+    setFormData(prev => ({
+      ...prev,
+      name: validatedConfig.name,
+      description: validatedConfig.description,
+      return_type: validatedConfig.return_type,
+      schema_definition: validatedConfig.schema_definition ? JSON.stringify(validatedConfig.schema_definition, null, 2) : '',
+      system_prompt: validatedConfig.prompts?.find((p: any) => p.prompt_type === 'system')?.content || '',
+      user_prompt: validatedConfig.prompts?.find((p: any) => p.prompt_type === 'user')?.content || '',
+      system_prompt_placeholders: validatedConfig.prompts?.find((p: any) => p.prompt_type === 'system')?.placeholders || {},
+      user_prompt_placeholders: validatedConfig.prompts?.find((p: any) => p.prompt_type === 'user')?.placeholders || {},
+    }));
+
+    // Ensure tools are selected based on AI recommendation
+    if (validatedConfig.tool_ids && validatedConfig.tool_ids.length > 0) {
+      setSelectedTools(prev => prev.map(tool => ({
+        ...tool,
+        selected: validatedConfig.tool_ids!.includes(tool.id)
+      })));
+    }
+
+    // Switch to manual mode to show the populated form
+    setBuilderMode('manual');
+  };
+
+  const handleSwitchToManual = () => {
+    setBuilderMode('manual');
+  };
+
   if (projectsLoading || toolsLoading) {
     return (
       <Layout>
@@ -180,16 +236,66 @@ export default function CreateAgent() {
   }
 
   return (
-    <Layout>
-      <div className="mx-auto max-w-2xl">
-        <div className="mb-8">
-          <h1 className="text-white text-3xl font-bold leading-tight tracking-tight">
-            Create Agent
-          </h1>
-          <p className="text-gray-400 mt-1">
-            Define and configure a new agent to assist with your tasks.
-          </p>
+    <Layout fullHeight={builderMode === 'ai'}>
+      <div className={builderMode === 'ai' ? 'flex flex-col h-[calc(100vh-80px)]' : 'mx-auto max-w-2xl'}>
+        <div className={builderMode === 'ai' ? 'px-4 sm:px-6 lg:px-8 py-4 border-b border-[#374151] bg-[#1a2633]' : 'mb-8'}>
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-white text-3xl font-bold leading-tight tracking-tight">
+                Create Agent
+              </h1>
+              <p className="text-gray-400 mt-1">
+                {builderMode === 'ai'
+                  ? 'Build your agent through an interactive conversation with AI.'
+                  : 'Define and configure a new agent to assist with your tasks.'
+                }
+              </p>
+            </div>
+          </div>
+
+          {/* Tab System */}
+          <div className="mt-6">
+            <div className="flex space-x-1 bg-[#111a22] p-1 rounded-lg">
+              <button
+                onClick={() => setBuilderMode('ai')}
+                className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                  builderMode === 'ai'
+                    ? 'bg-[#1173d4] text-white'
+                    : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                <span className="material-symbols-outlined text-base">smart_toy</span>
+                AI Assistant
+              </button>
+              <button
+                onClick={() => setBuilderMode('manual')}
+                className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                  builderMode === 'manual'
+                    ? 'bg-[#1173d4] text-white'
+                    : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                <span className="material-symbols-outlined text-base">edit</span>
+                Manual Builder
+              </button>
+            </div>
+          </div>
         </div>
+
+        {/* AI Chat Interface */}
+        {builderMode === 'ai' && (
+          <div className="flex-1 min-h-0 p-4 sm:p-6 lg:p-8">
+            <ChatInterface
+              onAgentConfigComplete={handleAgentConfigComplete}
+              onSwitchToManual={handleSwitchToManual}
+              selectedProject={formData.project}
+            />
+          </div>
+        )}
+
+        {/* Manual Form Builder */}
+        {builderMode === 'manual' && (
+          <div className="mx-auto max-w-2xl px-4 sm:px-6 lg:px-8 py-8">
 
         <form onSubmit={handleSubmit} className="space-y-8">
           {/* Basic Information */}
@@ -334,6 +440,8 @@ export default function CreateAgent() {
             </Button>
           </div>
         </form>
+          </div>
+        )}
       </div>
     </Layout>
   );

@@ -38,6 +38,64 @@ export const HEALTH_CHECK_CONFIG = {
   ENDPOINT: '/health/',
 };
 
+// Agent Builder AI Service configuration
+const getAgentBuilderUrl = (): string => {
+  // Check if we're in a browser environment
+  if (typeof window !== 'undefined') {
+    // Try environment variable first
+    const envUrl = import.meta.env?.REACT_APP_AGENT_BUILDER_URL || import.meta.env?.VITE_AGENT_BUILDER_URL;
+    if (envUrl) {
+      return envUrl;
+    }
+  }
+
+  // Server-side or fallback
+  try {
+    if (typeof process !== 'undefined' && process.env?.REACT_APP_AGENT_BUILDER_URL) {
+      return process.env.REACT_APP_AGENT_BUILDER_URL;
+    }
+  } catch (e) {
+    // process not available in browser
+  }
+
+  // Default fallback
+  return 'http://127.0.0.1:8001';
+};
+
+const getAgentBuilderTimeout = (): number => {
+  // Check if we're in a browser environment
+  if (typeof window !== 'undefined') {
+    const envTimeout = import.meta.env?.REACT_APP_AGENT_BUILDER_TIMEOUT || import.meta.env?.VITE_AGENT_BUILDER_TIMEOUT;
+    if (envTimeout) {
+      return parseInt(envTimeout);
+    }
+  }
+
+  // Server-side or fallback
+  try {
+    if (typeof process !== 'undefined' && process.env?.REACT_APP_AGENT_BUILDER_TIMEOUT) {
+      return parseInt(process.env.REACT_APP_AGENT_BUILDER_TIMEOUT);
+    }
+  } catch (e) {
+    // process not available in browser
+  }
+
+  // Default fallback
+  return 30000;
+};
+
+export const AGENT_BUILDER_CONFIG = {
+  BASE_URL: getAgentBuilderUrl(),
+  TIMEOUT: getAgentBuilderTimeout(),
+  HEALTH_ENDPOINT: '/healthz',
+  SESSION_ENDPOINT: '/session/',
+  CHAT_ENDPOINT: '/chat/',
+  GENERATE_ENDPOINT: '/generate/',
+  GENERATE_FINALIZE_ENDPOINT: '/generate/finalize/',
+  FINALIZE_ENDPOINT: '/finalize/',
+  RESET_ENDPOINT: '/reset/',
+};
+
 // Frontend configuration
 export const APP_CONFIG = {
   NAME: 'Agent Builder',
@@ -58,6 +116,7 @@ export const FEATURES = {
 export default {
   API_CONFIG,
   HEALTH_CHECK_CONFIG,
+  AGENT_BUILDER_CONFIG,
   APP_CONFIG,
   FEATURES,
 };
