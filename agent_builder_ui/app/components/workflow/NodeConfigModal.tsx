@@ -378,14 +378,14 @@ export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave }:
                     <div className="flex items-center justify-between mb-2">
                       <h4 className="text-sm font-medium text-white flex items-center gap-2">
                         <span className="material-symbols-outlined text-base">database</span>
-                        {schemaData.database_name} ({schemaData.database_type})
+                        {schemaData.metadata?.data_source_id || 'Unknown'} ({schemaData.database_type})
                       </h4>
-                      <span className="text-xs text-gray-400">{schemaData.tables.length} tables</span>
+                      <span className="text-xs text-gray-400">{schemaData.metadata?.tables?.length || 0} tables</span>
                     </div>
 
                     <div className="space-y-2">
-                      {schemaData.tables.map((tableName: string) => {
-                        const tableSchema = schemaData.schema[tableName];
+                      {schemaData.metadata?.tables?.map((table: any) => {
+                        const tableName = table.table_name;
                         const isExpanded = expandedTables.has(tableName);
 
                         return (
@@ -403,7 +403,7 @@ export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave }:
                                 {tableName}
                               </span>
                               <span className="text-xs text-gray-400">
-                                {tableSchema.columns.length} columns
+                                {table.columns?.length || 0} columns
                               </span>
                             </button>
 
@@ -412,17 +412,17 @@ export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave }:
                                 <div>
                                   <p className="text-xs text-gray-400 mb-1">Columns:</p>
                                   <div className="space-y-1">
-                                    {tableSchema.columns.map((col: any, idx: number) => (
+                                    {table.columns?.map((col: any, idx: number) => (
                                       <div
                                         key={idx}
                                         className="flex items-center gap-2 text-xs bg-[#111a22] rounded px-2 py-1"
                                       >
                                         <span className="material-symbols-outlined text-xs text-gray-400">
-                                          {col.nullable ? 'toggle_off' : 'toggle_on'}
+                                          {col.is_nullable === 'YES' ? 'toggle_off' : 'toggle_on'}
                                         </span>
-                                        <span className="text-white font-mono">{col.name}</span>
-                                        <span className="text-gray-400">({col.type})</span>
-                                        {!col.nullable && (
+                                        <span className="text-white font-mono">{col.column_name}</span>
+                                        <span className="text-gray-400">({col.data_type})</span>
+                                        {col.is_nullable === 'NO' && (
                                           <span className="text-red-400 text-[10px]">NOT NULL</span>
                                         )}
                                       </div>
@@ -430,12 +430,12 @@ export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave }:
                                   </div>
                                 </div>
 
-                                {tableSchema.sample_data && tableSchema.sample_data.length > 0 && (
+                                {table.sample_data && table.sample_data.length > 0 && (
                                   <div>
                                     <p className="text-xs text-gray-400 mb-1">Sample Data:</p>
                                     <div className="text-xs bg-[#111a22] rounded p-2 overflow-x-auto">
                                       <pre className="text-gray-300 font-mono">
-                                        {JSON.stringify(tableSchema.sample_data, null, 2)}
+                                        {JSON.stringify(table.sample_data, null, 2)}
                                       </pre>
                                     </div>
                                   </div>

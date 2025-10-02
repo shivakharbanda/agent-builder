@@ -424,8 +424,13 @@ class WorkflowBuilderToolsViewSet(viewsets.ViewSet):
         Return different authentication classes based on the request path.
 
         register_session is called by the UI with JWT token to create a session.
-        Tool endpoints (get_credentials, get_agents, inspect_schema) are called by
-        FastAPI with session_id to look up the user.
+        Tool endpoints (get_credentials, get_agents, inspect_schema) are called by:
+          1. FastAPI with session_id parameter (SessionIDAuthentication)
+          2. UI directly with JWT token (CustomAuthentication)
+
+        We support both authentication methods for tool endpoints to allow:
+        - AI agent tool calls from FastAPI (via session_id)
+        - Direct UI calls for schema inspection, etc. (via JWT token)
 
         Note: We check the path instead of self.action because action is not yet
         available during the request initialization phase when this is called.
@@ -439,8 +444,14 @@ class WorkflowBuilderToolsViewSet(viewsets.ViewSet):
             from rest_framework.authentication import SessionAuthentication
             return [CustomAuthentication(), SessionAuthentication()]
         else:
-            # Tool endpoints - FastAPI calls with session_id
-            return [SessionIDAuthentication()]
+            # Tool endpoints - support both FastAPI (session_id) and UI (JWT) calls
+            from users.authentication import CustomAuthentication
+            from rest_framework.authentication import SessionAuthentication
+            return [
+                SessionIDAuthentication(),  # Try session_id first (FastAPI agent tools)
+                CustomAuthentication(),      # Fall back to JWT (UI direct calls)
+                SessionAuthentication()      # Fall back to session cookie
+            ]
 
     @action(detail=False, methods=['post'])
     def register_session(self, request):

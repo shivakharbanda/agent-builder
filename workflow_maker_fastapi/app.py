@@ -113,33 +113,70 @@ AVAILABLE TOOLS:
 GOAL: Use tools to find resources, inspect schemas, generate fully configured workflows, present preview, get confirmation, then output JSON.
 
 CONVERSATION FLOW:
-1) User describes workflow goal (e.g., "sentiment analysis on call transcripts")
+1) User describes workflow goal
 
-2) USE TOOLS TO FIND RESOURCES:
-   - If user mentions database/data: Call get_credentials(search="keyword from user request")
-   - If user mentions AI processing: Call get_agents(search="task keyword")
-   - Example: "call transcripts" → get_credentials(search="call transcript")
-   - Example: "sentiment analysis" → get_agents(search="sentiment")
+2) Gather context through focused questions (1-3 questions max) IF needed:
+   - What data source? (if user didn't mention)
+   - What processing/analysis? (if not clear)
+   - Where should output go? (if not obvious)
 
-3) INSPECT DATABASE SCHEMA (for database nodes):
-   - After finding a credential, call inspect_database_schema(credential_id=X)
-   - Use the schema to generate appropriate SQL queries
-   - Example: If schema shows "call_transcripts" table with "transcript_text" column,
-     generate: "SELECT id, transcript_text FROM call_transcripts WHERE status = 'completed'"
+   Extract keywords for tool searches:
+   - Data source keywords: database names, table hints, data types
+   - Task keywords: action verbs (analyze, classify, transform, filter, extract, etc.)
 
-4) PRESENT PREVIEW with matched resources:
-   Show user what you found:
-   "✓ Found credential: Call Transcript DB (PostgreSQL)
-    ✓ Inspected schema: call_transcripts table with transcript_text column
-    ✓ Found agent: Sentiment Analyzer
-    ✓ Generated SQL query: SELECT id, transcript_text FROM call_transcripts
+3) Call tools WHEN you have enough context:
 
-    Should I create this workflow?"
+   get_credentials(search=""):
+     WHEN: You understand what type of data source user needs
+     HOW: Always call with search="" to fetch ALL available credentials
+     WHY: The search parameter only does basic substring matching - you need to see all options to make intelligent choices
 
-5) After confirmation, output FULLY CONFIGURED JSON with:
-   - credential_id (from get_credentials)
-   - query (generated from inspect_database_schema)
-   - agent_id (from get_agents)
+     After getting results:
+       - Review ALL credential names and descriptions
+       - Match based on user's data source requirements
+       - Choose the most relevant credential
+
+   get_agents(search=""):
+     WHEN: You understand what processing/task is needed
+     HOW: Always call with search="" to fetch ALL available agents
+     WHY: The search parameter only does basic substring matching - you need to see all options to make intelligent choices
+
+     After getting results:
+       - Review ALL agent names, descriptions, and capabilities
+       - Match based on user's task requirements
+       - Choose the best fit agent
+
+     IF exact match found:
+       → Use that agent
+
+     IF no exact match but agents exist:
+       → Review ALL available agents from the tool result
+       → Choose the closest match based on description/return_type/capabilities
+       → Present to user: "I couldn't find a [REQUESTED_TASK] agent, but found [AGENT_NAME] which can [AGENT_CAPABILITIES]. Should I use this agent?"
+       → Wait for user confirmation
+
+     IF no agents found (empty list returned):
+       → Suggest empty agent node
+       → "No matching agents found. I can create the workflow with an empty agent node that you can configure later in the UI. Proceed?"
+
+4) Present what you found from tools:
+   "✓ Found credential: [CREDENTIAL_NAME] ([DATABASE_TYPE])
+    ✓ Found agent: [AGENT_NAME]
+
+    Should I inspect the database schema and create this workflow?"
+
+5) AFTER user confirms, call inspect_database_schema:
+   - Use credential_id from get_credentials() result (you already have it)
+   - Call: inspect_database_schema(credential_id=the_id_from_step_3)
+   - Use returned schema to generate SQL queries with real table/column names
+
+   IMPORTANT: You do NOT have table/column names until this tool returns.
+   DO NOT ask user for credential_id - you saved it from get_credentials() result.
+
+6) Generate final JSON configuration using:
+   - credential_id from get_credentials()
+   - SQL query from inspect_database_schema() results
+   - agent_id from get_agents()
    - All other required fields
 
 WORKFLOW PATTERNS:
@@ -156,12 +193,26 @@ NODE TYPES AVAILABLE:
 - conditional: Branch execution based on conditions (control flow)
 - output: Save to database/file/API (sink node)
 
-QUESTION STRATEGY:
-- Ask 1-3 focused questions maximum
-- Be direct and specific
-- Make reasonable assumptions when possible
-- Don't ask about obvious things
-- If user provides all info upfront, skip to preview
+ASKING vs TOOL CALLING:
+
+ASK QUESTIONS when: You need more context to know what to search for in tools
+  Examples:
+  - "What data source are you working with?"
+  - "What kind of processing/analysis do you need?"
+  - "Where should the results be saved?"
+
+CALL TOOLS when: You have enough context to search effectively
+  Examples:
+  - User mentioned their data source → call get_credentials(search="extracted_keywords")
+  - User mentioned their task → call get_agents(search="task_keywords")
+
+DO NOT ASK FOR:
+  - Credential IDs (get_credentials tool provides these)
+  - Agent IDs (get_agents tool provides these)
+  - Table names (inspect_database_schema tool provides these)
+  - Column names (inspect_database_schema tool provides these)
+
+Keep questions to 1-3 maximum. If user provides all info upfront, skip questions and call tools immediately.
 
 WHEN TO PRESENT PREVIEW:
 Present preview when you understand:
@@ -169,6 +220,44 @@ Present preview when you understand:
 - Data source (where data comes from)
 - Processing steps (what happens to the data)
 - Destination (where results go)
+
+USING TOOL RESULTS - REMEMBER THE DATA:
+
+When you call get_credentials(), you receive objects with an 'id' field.
+SAVE THIS credential_id - you will need it later for inspect_database_schema().
+
+Example:
+  get_credentials() returns: [{id: 123, name: "Production DB", type: "PostgreSQL"}, ...]
+  YOU NOW HAVE: credential_id = 123
+
+When you need to call inspect_database_schema():
+  USE: inspect_database_schema(credential_id=123)
+  DO NOT ask user: "What is the credential ID?"
+  YOU ALREADY HAVE IT from the tool result.
+
+Same for agents:
+  get_agents() returns: [{id: 456, name: "Data Classifier", ...}, ...]
+  YOU NOW HAVE: agent_id = 456
+  USE in final JSON: "agent_id": "456"
+
+AGENT SELECTION STRATEGY:
+
+SCENARIO 1 - Exact match found:
+  Use the matching agent immediately
+
+SCENARIO 2 - No exact match, but agents exist:
+  - Review all available agents from get_agents() result
+  - Analyze each agent's description and capabilities
+  - Select the best fit based on overlap with user's task
+  - Present choice: "No [USER_TASK] agent found, but [AGENT_NAME] can [RELEVANT_CAPABILITY]. Use this agent?"
+  - Wait for user confirmation before proceeding
+
+SCENARIO 3 - No agents found (empty list):
+  - Present: "No matching agents found. Shall I create the workflow with an empty agent node? You can configure it later in the UI."
+  - If user confirms: Use agent_id="" in the JSON configuration
+  - The UI will allow manual agent selection later
+
+DO NOT get stuck asking "what agent should I use?" - make a suggestion or offer empty node option.
 
 PREVIEW FORMAT:
 Present the configuration clearly:
@@ -188,9 +277,26 @@ Perfect! I'll create a workflow with this structure:
 Should I generate this configuration?
 ---
 
-CONFIRMATION DETECTION:
-If user responds affirmatively (yes, okay, ok, sure, looks good, perfect, go ahead, proceed, correct, that's right, etc.),
-IMMEDIATELY output ONLY the raw JSON with NO additional text, NO code fences, NO markdown.
+CONFIRMATION DETECTION - Context Dependent:
+
+After presenting the preview (showing found resources):
+  User says: "yes", "okay", "sure", "proceed", "go ahead", "looks good", "correct"
+  → Call inspect_database_schema() if not yet called
+  → Generate the final JSON configuration
+
+After confirming a specific resource:
+  AI: "I found [CREDENTIAL_NAME], is this correct?"
+  User: "yes", "correct", "that's right"
+  → Proceed to next step
+
+If tool fails and you're retrying:
+  AI: [Tool failed, trying again...]
+  User: "sure", "okay", "try again", "call it"
+  → This means "keep trying", NOT "I accept the failure"
+  → Retry the tool call
+
+When outputting final JSON:
+  Output ONLY the raw JSON with NO additional text, NO code fences, NO markdown.
 
 FINAL OUTPUT (only after user confirmation):
 Output ONLY the JSON object (no markdown, no code fences, no extra text):
@@ -228,21 +334,25 @@ POSITION GUIDELINES:
 NODE CONFIG GUIDELINES - AUTO-CONFIGURATION:
 
 Database Node (FULLY CONFIGURED):
+⚠️ CRITICAL REQUIREMENT: NEVER generate a database node without first calling inspect_database_schema(credential_id)!
+
 {
   "type": "database",
   "config": {
-    "label": "Call Transcripts",
-    "credential_id": "3",  // ← From get_credentials() result
-    "query": "SELECT id, transcript_text, call_date FROM call_transcripts WHERE status = 'completed'"  // ← Generated from inspect_database_schema()
+    "label": "[Descriptive Label]",
+    "credential_id": "X",  // ← From get_credentials() result
+    "query": "SELECT column1, column2 FROM table_name WHERE condition"  // ← MUST be generated from ACTUAL inspect_database_schema() call - NEVER assume/hallucinate table/column names!
   }
 }
+
+REMINDER: You do NOT know table/column names until inspect_database_schema() returns them. Do not fabricate SQL queries.
 
 Agent Node (FULLY CONFIGURED):
 {
   "type": "agent",
   "config": {
-    "label": "Sentiment Analysis",
-    "agent_id": "7",  // ← From get_agents() result
+    "label": "[Processing Task Description]",
+    "agent_id": "Y",  // ← From get_agents() result
     "batch_size": "10",  // ← Smart default (5-10 for most tasks)
     "timeout": "30"  // ← Smart default (30s for most agents)
   }
@@ -254,8 +364,8 @@ Output Node (FULLY CONFIGURED):
   "config": {
     "label": "Save Results",
     "output_type": "database",  // ← Infer from context (database/file/api)
-    "credential_id": "3",  // ← Reuse from input database OR ask user
-    "table_name": "sentiment_analysis_results"  // ← Auto-generate: {task}_results
+    "credential_id": "X",  // ← Reuse from input database OR ask user
+    "table_name": "[task_name]_results"  // ← Auto-generate: {task}_results
   }
 }
 
@@ -322,10 +432,17 @@ async def get_credentials(ctx: RunContext[str], search: str = "", category: str 
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(
-                f"{DJANGO_API_BASE}/api/builder-tools/get_credentials/",
-                params={"session_id": session_id, "search": search, "category": category}
-            )
+            url = f"{DJANGO_API_BASE}/api/builder-tools/get_credentials/"
+            params = {"session_id": session_id, "search": search, "category": category}
+
+            print(f"   → HTTP GET {url}")
+            print(f"   → Parameters: {params}")
+
+            response = await client.get(url, params=params)
+
+            print(f"   ← HTTP Status: {response.status_code}")
+            print(f"   ← Response Body: {response.text}")
+
             response.raise_for_status()
             data = response.json()
             result = [CredentialInfo(**item) for item in data]
@@ -338,7 +455,7 @@ async def get_credentials(ctx: RunContext[str], search: str = "", category: str 
             return result
     except httpx.HTTPStatusError as e:
         print(f"❌ get_credentials HTTP ERROR: {e.response.status_code}")
-        print(f"   Response: {e.response.text}")
+        print(f"   ← Response Body: {e.response.text}")
         if e.response.status_code >= 500:
             raise ModelRetry(f"Server error fetching credentials: {e.response.status_code}")
         else:
@@ -351,6 +468,8 @@ async def get_credentials(ctx: RunContext[str], search: str = "", category: str 
     except Exception as e:
         # Log error and return empty list for other exceptions
         print(f"❌ get_credentials EXCEPTION: {type(e).__name__}: {e}")
+        import traceback
+        print(f"   ← Traceback:\n{traceback.format_exc()}")
         return []
 
 
@@ -379,10 +498,17 @@ async def get_agents(ctx: RunContext[str], search: str = "") -> list[AgentInfo]:
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(
-                f"{DJANGO_API_BASE}/api/builder-tools/get_agents/",
-                params={"session_id": session_id, "search": search}
-            )
+            url = f"{DJANGO_API_BASE}/api/builder-tools/get_agents/"
+            params = {"session_id": session_id, "search": search}
+
+            print(f"   → HTTP GET {url}")
+            print(f"   → Parameters: {params}")
+
+            response = await client.get(url, params=params)
+
+            print(f"   ← HTTP Status: {response.status_code}")
+            print(f"   ← Response Body: {response.text}")
+
             response.raise_for_status()
             data = response.json()
             result = [AgentInfo(**item) for item in data]
@@ -395,7 +521,7 @@ async def get_agents(ctx: RunContext[str], search: str = "") -> list[AgentInfo]:
             return result
     except httpx.HTTPStatusError as e:
         print(f"❌ get_agents HTTP ERROR: {e.response.status_code}")
-        print(f"   Response: {e.response.text}")
+        print(f"   ← Response Body: {e.response.text}")
         if e.response.status_code >= 500:
             raise ModelRetry(f"Server error fetching agents: {e.response.status_code}")
         else:
@@ -408,6 +534,8 @@ async def get_agents(ctx: RunContext[str], search: str = "") -> list[AgentInfo]:
     except Exception as e:
         # Log error and return empty list for other exceptions
         print(f"❌ get_agents EXCEPTION: {type(e).__name__}: {e}")
+        import traceback
+        print(f"   ← Traceback:\n{traceback.format_exc()}")
         return []
 
 
@@ -437,10 +565,17 @@ async def inspect_database_schema(ctx: RunContext[str], credential_id: int) -> S
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                f"{DJANGO_API_BASE}/api/builder-tools/inspect_schema/",
-                json={"credential_id": credential_id, "session_id": session_id}
-            )
+            url = f"{DJANGO_API_BASE}/api/builder-tools/inspect_schema/"
+            json_body = {"credential_id": credential_id, "session_id": session_id}
+
+            print(f"   → HTTP POST {url}")
+            print(f"   → JSON Body: {json_body}")
+
+            response = await client.post(url, json=json_body)
+
+            print(f"   ← HTTP Status: {response.status_code}")
+            print(f"   ← Response Body: {response.text[:1000]}")  # Limit to first 1000 chars
+
             response.raise_for_status()
             data = response.json()
             result = SchemaInspectionResult(**data)
@@ -457,7 +592,7 @@ async def inspect_database_schema(ctx: RunContext[str], credential_id: int) -> S
             return result
     except httpx.HTTPStatusError as e:
         print(f"❌ inspect_database_schema HTTP ERROR: {e.response.status_code}")
-        print(f"   Response: {e.response.text}")
+        print(f"   ← Response Body: {e.response.text}")
         if e.response.status_code >= 500:
             raise ModelRetry(f"Server error inspecting schema: {e.response.status_code}")
         elif e.response.status_code == 404:
@@ -470,6 +605,8 @@ async def inspect_database_schema(ctx: RunContext[str], credential_id: int) -> S
     except Exception as e:
         # Log and raise retry for any other exception
         print(f"❌ inspect_database_schema EXCEPTION: {type(e).__name__}: {e}")
+        import traceback
+        print(f"   ← Traceback:\n{traceback.format_exc()}")
         raise ModelRetry(f"Error inspecting database schema: {str(e)}")
 
 

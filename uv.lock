@@ -463,7 +463,7 @@ wheels = [
 
 [[package]]
 name = "dq-db-manager"
-version = "0.1.0"
+version = "0.1.1"
 source = { directory = "../../personal-projects/dq_db_manager" }
 
 [[package]]
