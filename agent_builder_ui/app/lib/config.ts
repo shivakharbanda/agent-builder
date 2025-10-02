@@ -105,19 +105,17 @@ const getWorkflowBuilderUrl = (): string => {
     if (envUrl) {
       return envUrl;
     }
-  }
 
-  // Server-side or fallback
-  try {
-    if (typeof process !== 'undefined' && process.env?.REACT_APP_WORKFLOW_BUILDER_URL) {
-      return process.env.REACT_APP_WORKFLOW_BUILDER_URL;
+    // Use FastAPI workflow builder service
+    const { protocol, hostname } = window.location;
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      return `${protocol}//${hostname}:8002`;
     }
-  } catch (e) {
-    // process not available in browser
+    return `${protocol}//${hostname}:8002`;
   }
 
-  // Default fallback - port 8002 (different from agent builder on 8001)
-  return 'http://127.0.0.1:8002';
+  // Server-side fallback
+  return 'http://localhost:8002';
 };
 
 const getWorkflowBuilderTimeout = (): number => {

@@ -491,6 +491,7 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExe
           position: node.position || { x: 100 + index * 200, y: 100 },
           data: {
             id: node.id,
+            dbId: node.dbId, // Backend database ID from workflow.nodes[]
             label: node.config?.name || `${node.type.charAt(0).toUpperCase()}${node.type.slice(1)} Node`,
             config: node.config,
             onConfig: handleNodeConfig,

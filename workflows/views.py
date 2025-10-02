@@ -90,79 +90,88 @@ class WorkflowViewSet(viewsets.ModelViewSet):
         - {"node_id": <id>} - Execute specific node only
         """
         from django.utils import timezone
+        from workflows.execution.node_handlers.factory import NodeFactory
 
         workflow = self.get_object()
         node_id = request.data.get('node_id')
 
-        # Initialize WorkflowHandler to get complete workflow configuration
-        try:
-            handler = WorkflowHandler(workflow_id=workflow.id)
-            workflow_config = handler.get_workflow_config()
-        except Exception as e:
-            return Response({
-                'detail': f'Error loading workflow configuration: {str(e)}'
-            }, status=500)
+        # Debug logging
+        print(f"DEBUG: Request data: {request.data}")
+        print(f"DEBUG: node_id: {node_id}, type: {type(node_id)}")
 
-        # Validate node if node_id is provided
+        # Single node execution mode
         if node_id:
             try:
-                node = WorkflowNode.objects.get(id=node_id, workflow=workflow, is_active=True)
-                # Single node execution mode
-                response_data = {
-                    'execution_id': 124,  # Hardcoded for now
+                # Get workflow node from database
+                workflow_node = WorkflowNode.objects.get(id=node_id, workflow=workflow, is_active=True)
+
+                # Create node instance using factory
+                started_at = timezone.now()
+                node_instance = NodeFactory.create_node(
+                    node_id=workflow_node.id,
+                    node_type=workflow_node.node_type,
+                    configuration=workflow_node.configuration,
+                    workflow_id=workflow.id,
+                    execution_id=0,  # TODO: proper execution tracking
+                    position=workflow_node.position
+                )
+
+                # Execute the node
+                results = node_instance.run()
+                completed_at = timezone.now()
+                execution_time = (completed_at - started_at).total_seconds()
+
+                # Get execution metadata
+                metadata = node_instance.get_metadata()
+
+                # Return successful execution results
+                return Response({
+                    'status': 'completed',
+                    'node_id': node_id,
+                    'node_type': workflow_node.node_type,
                     'workflow_id': workflow.id,
                     'workflow_name': workflow.name,
-                    'node_id': node.id,
-                    'node_type': node.node_type,
-                    'node_position': node.position,
-                    'status': 'running',
-                    'mode': 'single_node',
-                    'started_at': timezone.now().isoformat(),
-                    'message': f'Node execution started successfully for {node.node_type} node at position {node.position}',
-                    'estimated_duration': '30 seconds',
-                    'configuration': node.configuration,
-                    'workflow_handler': {
-                        'total_nodes': len(workflow_config['nodes']),
-                        'total_edges': len(workflow_config['edges']),
-                        'workflow_properties': workflow_config['properties']
-                    }
-                }
-                return Response(response_data, status=202)
+                    'results': results,
+                    'metadata': metadata,
+                    'started_at': started_at.isoformat(),
+                    'completed_at': completed_at.isoformat(),
+                    'execution_time': execution_time,
+                    'message': f'{workflow_node.node_type.capitalize()} node executed successfully'
+                }, status=200)
+
             except WorkflowNode.DoesNotExist:
                 return Response({
+                    'status': 'error',
                     'detail': f'Node with id {node_id} not found in workflow {workflow.id}'
                 }, status=404)
-        else:
-            # Full workflow execution mode
-            nodes = WorkflowNode.objects.filter(workflow=workflow, is_active=True).order_by('position')
+            except ValueError as e:
+                # Validation errors from node.validate()
+                return Response({
+                    'status': 'error',
+                    'node_id': node_id,
+                    'error': str(e),
+                    'error_type': 'validation_error',
+                    'message': 'Node validation failed'
+                }, status=400)
+            except Exception as e:
+                # Runtime errors from node.execute()
+                import traceback
+                return Response({
+                    'status': 'failed',
+                    'node_id': node_id,
+                    'error': str(e),
+                    'error_type': type(e).__name__,
+                    'traceback': traceback.format_exc() if request.user.is_staff else None,
+                    'message': 'Node execution failed'
+                }, status=500)
 
-            response_data = {
-                'execution_id': 123,  # Hardcoded for now
-                'workflow_id': workflow.id,
-                'workflow_name': workflow.name,
-                'status': 'running',
-                'mode': 'full_workflow',
-                'started_at': timezone.now().isoformat(),
-                'message': 'Workflow execution started successfully',
-                'total_nodes': len(workflow_config['nodes']),
-                'nodes_to_execute': [node.id for node in nodes],
-                'node_types': [node.node_type for node in nodes],
-                'estimated_duration': '5 minutes',
-                'execution_order': [
-                    {
-                        'position': node.position,
-                        'node_id': node.id,
-                        'node_type': node.node_type
-                    }
-                    for node in nodes
-                ],
-                'workflow_handler': {
-                    'configuration': workflow_config['configuration'],
-                    'properties': workflow_config['properties'],
-                    'project_name': workflow_config['project_name']
-                }
-            }
-            return Response(response_data, status=202)
+        # Full workflow execution mode
+        else:
+            return Response({
+                'status': 'error',
+                'detail': 'Full workflow execution not yet implemented. Please execute individual nodes.',
+                'message': 'Use node_id parameter to execute a specific node'
+            }, status=501)
 
     @action(detail=False, methods=['post'])
     def save_complete(self, request):
@@ -381,3 +390,310 @@ class OutputNodeViewSet(viewsets.ModelViewSet):
     search_fields = ['destination_table']
     ordering_fields = ['destination_table', 'created_at']
     ordering = ['destination_table']
+
+
+# ============================================================================
+# AI Workflow Builder Tool Endpoints
+# ============================================================================
+
+from django.db.models import Q
+from credentials.models import Credential
+from credentials.serializers import CredentialListSerializer
+from agents.models import Agent
+from agents.serializers import AgentListSerializer
+from dq_db_manager.models.postgres import DataSourceMetadata
+from workflows.authentication import SessionIDAuthentication
+from rest_framework.permissions import IsAuthenticated
+
+
+class WorkflowBuilderToolsViewSet(viewsets.ViewSet):
+    """
+    API endpoints for AI workflow builder tools.
+
+    These endpoints are called by the Pydantic AI agent to gather context
+    and resources needed for auto-configuring workflow nodes.
+
+    Authentication:
+    - register_session: Uses JWT authentication (called by UI/frontend)
+    - Tool endpoints (get_credentials, get_agents, inspect_schema): Uses SessionIDAuthentication (called by FastAPI)
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get_authenticators(self):
+        """
+        Return different authentication classes based on the request path.
+
+        register_session is called by the UI with JWT token to create a session.
+        Tool endpoints (get_credentials, get_agents, inspect_schema) are called by
+        FastAPI with session_id to look up the user.
+
+        Note: We check the path instead of self.action because action is not yet
+        available during the request initialization phase when this is called.
+        """
+        # Get the request - it's available even during initialization
+        request = self.request if hasattr(self, 'request') else None
+
+        if request and request.path.endswith('register_session/'):
+            # This is register_session - UI calls with JWT token
+            from users.authentication import CustomAuthentication
+            from rest_framework.authentication import SessionAuthentication
+            return [CustomAuthentication(), SessionAuthentication()]
+        else:
+            # Tool endpoints - FastAPI calls with session_id
+            return [SessionIDAuthentication()]
+
+    @action(detail=False, methods=['post'])
+    def register_session(self, request):
+        """
+        Register a new workflow builder session.
+
+        Request body:
+            - project_id: Required project ID
+
+        Returns:
+            - session_id: UUID for the FastAPI session
+        """
+        import uuid
+        from datetime import timedelta
+        from django.utils import timezone
+        from workflows.models import WorkflowBuilderSession
+
+        project_id = request.data.get('project_id')
+
+        if not project_id:
+            return Response(
+                {'error': 'project_id is required'},
+                status=400
+            )
+
+        try:
+            # Generate new session UUID
+            session_id = uuid.uuid4()
+
+            # Set expiration (24 hours from now)
+            expires_at = timezone.now() + timedelta(hours=24)
+
+            # Create session record
+            session = WorkflowBuilderSession.objects.create(
+                session_id=session_id,
+                project_id=project_id,
+                created_by=request.user,
+                expires_at=expires_at,
+                is_active=True
+            )
+
+            return Response({
+                'session_id': str(session_id),
+                'expires_at': expires_at.isoformat(),
+                'project_id': project_id
+            }, status=201)
+
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to create session: {str(e)}'},
+                status=500
+            )
+
+    @action(detail=False, methods=['get'])
+    def get_credentials(self, request):
+        """
+        Tool: Get available database credentials for the current user.
+
+        Query params:
+            - session_id: Optional workflow builder session ID (for FastAPI tools)
+            - search: Optional search term to filter by name/description
+            - category: Credential category filter (default: RDBMS)
+
+        Returns:
+            List of credentials matching the criteria
+        """
+        from workflows.models import WorkflowBuilderSession
+
+        search = request.query_params.get('search', '')
+        category = request.query_params.get('category', 'RDBMS')
+        session_id = request.query_params.get('session_id')
+
+        # Determine user: from session_id (FastAPI) or request.user (direct UI call)
+        if session_id:
+            try:
+                session = WorkflowBuilderSession.objects.get(
+                    session_id=session_id,
+                    is_active=True
+                )
+                user = session.created_by
+            except WorkflowBuilderSession.DoesNotExist:
+                return Response(
+                    {'error': f'Session {session_id} not found or expired'},
+                    status=404
+                )
+        else:
+            # Backward compatible: use request.user for direct UI calls
+            user = request.user
+
+        # Filter by user and category
+        credentials = Credential.objects.filter(
+            user=user,
+            is_deleted=False,
+            credential_type__category__name=category,
+            is_active=True
+        ).select_related('credential_type', 'credential_type__category')
+
+        # Apply search filter if provided
+        if search:
+            credentials = credentials.filter(
+                Q(name__icontains=search) | Q(description__icontains=search)
+            )
+
+        serializer = CredentialListSerializer(credentials, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'])
+    def get_agents(self, request):
+        """
+        Tool: Get available AI agents for a specific project.
+
+        Query params:
+            - session_id: Optional workflow builder session ID (for FastAPI tools)
+            - project_id: Optional project ID (for direct UI calls, ignored if session_id provided)
+            - search: Optional search term to filter by name/description
+
+        Returns:
+            List of agents matching the criteria
+        """
+        from workflows.models import WorkflowBuilderSession
+
+        session_id = request.query_params.get('session_id')
+        project_id = request.query_params.get('project_id')
+        search = request.query_params.get('search', '')
+
+        # Determine project: from session_id (FastAPI) or project_id param (direct UI call)
+        if session_id:
+            try:
+                session = WorkflowBuilderSession.objects.get(
+                    session_id=session_id,
+                    is_active=True
+                )
+                project_id = session.project_id
+            except WorkflowBuilderSession.DoesNotExist:
+                return Response(
+                    {'error': f'Session {session_id} not found or expired'},
+                    status=404
+                )
+        elif not project_id:
+            return Response(
+                {'error': 'Either session_id or project_id is required'},
+                status=400
+            )
+
+        # Filter by project
+        agents = Agent.objects.filter(
+            project_id=project_id,
+            is_active=True
+        )
+
+        # Apply search filter if provided
+        if search:
+            agents = agents.filter(
+                Q(name__icontains=search) | Q(description__icontains=search)
+            )
+
+        serializer = AgentListSerializer(agents, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['post'])
+    def inspect_schema(self, request):
+        """
+        Tool: Inspect database schema for a credential.
+
+        Request body:
+            - credential_id: Required credential ID
+            - session_id: Optional workflow builder session ID (for FastAPI tools)
+
+        Returns:
+            Database schema information (tables, columns, sample data)
+        """
+        from dq_db_manager.database_factory import DatabaseFactory
+        from workflows.models import WorkflowBuilderSession
+
+        credential_id = request.data.get('credential_id')
+        session_id = request.data.get('session_id')
+
+        if not credential_id:
+            return Response(
+                {'error': 'credential_id is required'},
+                status=400
+            )
+
+        # Determine user: from session_id (FastAPI) or request.user (direct UI call)
+        if session_id:
+            try:
+                session = WorkflowBuilderSession.objects.get(
+                    session_id=session_id,
+                    is_active=True
+                )
+                user = session.created_by
+            except WorkflowBuilderSession.DoesNotExist:
+                return Response(
+                    {'error': f'Session {session_id} not found or expired'},
+                    status=404
+                )
+        else:
+            # Backward compatible: use request.user for direct UI calls
+            user = request.user
+
+        try:
+            # Fetch credential - ensure it belongs to the determined user (security)
+            credential = Credential.objects.select_related(
+                'credential_type', 'credential_type__category'
+            ).get(
+                id=credential_id,
+                user=user,
+                is_deleted=False,
+                is_active=True
+            )
+
+            # Verify it's a database credential
+            if credential.credential_type.category.name != 'RDBMS':
+                return Response(
+                    {'error': f'Credential must be RDBMS type, got {credential.credential_type.category.name}'},
+                    status=400
+                )
+
+            # Get connection details
+            db_type = credential.credential_type.type_name.lower()
+            connection_details = credential.get_connection_details()
+
+            # Use dq_db_manager to extract metadata
+            handler = DatabaseFactory.get_database_handler(db_type, connection_details)
+
+            # Get complete metadata from dq_db_manager as dict
+            metadata_dict = handler.metadata_extractor.get_complete_metadata()
+
+            # Validate with DataSourceMetadata model
+            metadata = DataSourceMetadata(**metadata_dict)
+
+            # Return simple wrapper with credential info + validated metadata
+            response_data = {
+                'credential_id': credential.id,
+                'credential_name': credential.name,
+                'database_type': credential.credential_type.type_name,
+                'metadata': metadata.model_dump()  # Convert Pydantic model to dict
+            }
+
+            return Response(response_data)
+
+        except Credential.DoesNotExist:
+            return Response(
+                {'error': f'Credential {credential_id} not found or access denied'},
+                status=404
+            )
+        except ValueError as e:
+            return Response(
+                {'error': f'Database type not supported: {str(e)}'},
+                status=400
+            )
+        except Exception as e:
+            return Response(
+                {'error': f'Schema inspection failed: {str(e)}'},
+                status=500
+            )

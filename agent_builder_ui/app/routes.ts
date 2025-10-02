@@ -9,7 +9,7 @@ export default [
   route("agents/:id", "routes/agents/$id.tsx"),
   route("agents/:id/edit", "routes/agents/$id.edit.tsx"),
   route("workflows", "routes/workflows.tsx"),
-  route("workflows/create", "routes/workflows/create.tsx"),
+  route("workflows/create/:projectId", "routes/workflows/create.tsx"),
   route("workflows/:id", "routes/workflows/$id.tsx"),
   route("workflows/:id/edit", "routes/workflows/create.tsx", { id: "workflow-edit" }),
   route("tools", "routes/tools.tsx"),

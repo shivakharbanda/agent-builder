@@ -226,3 +226,43 @@ class NodeType(BaseModel):
     class Meta:
         db_table = 'workflows_node_type'
         ordering = ['category', 'type_name']
+
+
+class WorkflowBuilderSession(BaseModel):
+    """
+    Session registry for workflow builder AI chat sessions.
+
+    Maps FastAPI session_id to Django user and project, enabling:
+    - Stateless FastAPI service (only knows session_id)
+    - Secure user/project lookup for tool calls
+    - Session tracking and auditing
+    """
+    session_id = models.UUIDField(
+        unique=True,
+        db_index=True,
+        help_text="UUID from FastAPI workflow builder session"
+    )
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.CASCADE,
+        related_name='workflow_builder_sessions',
+        help_text="Project context for this workflow session"
+    )
+    expires_at = models.DateTimeField(
+        help_text="Session expiration time (typically 24 hours)"
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Whether session is still valid"
+    )
+
+    def __str__(self):
+        return f"Session {self.session_id} - {self.created_by.username} - {self.project.name}"
+
+    class Meta:
+        db_table = 'workflows_builder_session'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['session_id', 'is_active']),
+            models.Index(fields=['created_by', 'project']),
+        ]

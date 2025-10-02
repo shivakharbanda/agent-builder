@@ -1,4 +1,6 @@
 import { useState, useCallback } from 'react';
+import axios from 'axios';
+import type { AxiosInstance } from 'axios';
 import { WORKFLOW_BUILDER_CONFIG } from '../lib/config';
 
 interface Message {
@@ -16,35 +18,17 @@ interface WorkflowBuilderSession {
   isComplete: boolean;
 }
 
-// Helper function for robust API calls
-const fetchWithTimeout = async (url: string, options: RequestInit = {}): Promise<Response> => {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), WORKFLOW_BUILDER_CONFIG.TIMEOUT);
+// Create axios instance for FastAPI service
+const createClient = (): AxiosInstance => {
+  const client = axios.create({
+    baseURL: WORKFLOW_BUILDER_CONFIG.BASE_URL,
+    timeout: WORKFLOW_BUILDER_CONFIG.TIMEOUT,
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
 
-  try {
-    const response = await fetch(url, {
-      ...options,
-      signal: controller.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
-    });
-
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    return response;
-  } catch (error) {
-    clearTimeout(timeoutId);
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`Request timeout after ${WORKFLOW_BUILDER_CONFIG.TIMEOUT}ms`);
-    }
-    throw error;
-  }
+  return client;
 };
 
 export const useWorkflowBuilder = () => {
@@ -57,16 +41,18 @@ export const useWorkflowBuilder = () => {
     isComplete: false,
   });
 
-  const createSession = useCallback(async (): Promise<string> => {
+  const client = createClient();
+
+  const createSession = useCallback(async (projectId: number = 1): Promise<string> => {
     try {
       setSession(prev => ({ ...prev, isLoading: true, isConnected: true }));
 
-      const response = await fetchWithTimeout(`${WORKFLOW_BUILDER_CONFIG.BASE_URL}${WORKFLOW_BUILDER_CONFIG.SESSION_ENDPOINT}`, {
-        method: 'POST',
-      });
-
-      const data = await response.json();
-      const sessionId = data.session_id;
+      // Use the new two-step session creation:
+      // 1. Register with Django (creates WorkflowBuilderSession)
+      // 2. Initialize with FastAPI (sets up chat)
+      const { default: workflowBuilderApi } = await import('../lib/workflowBuilderApi');
+      const response = await workflowBuilderApi.createSession(projectId);
+      const sessionId = response.session_id;
 
       setSession(prev => ({
         ...prev,
@@ -107,13 +93,21 @@ export const useWorkflowBuilder = () => {
         messages: [...prev.messages, userMessage],
       }));
 
-      const response = await fetchWithTimeout(`${WORKFLOW_BUILDER_CONFIG.BASE_URL}${WORKFLOW_BUILDER_CONFIG.GENERATE_ENDPOINT}`, {
+      // For streaming responses, use fetch
+      const response = await fetch(`${WORKFLOW_BUILDER_CONFIG.BASE_URL}${WORKFLOW_BUILDER_CONFIG.GENERATE_ENDPOINT}`, {
         method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
           prompt: message,
           session_id: session.sessionId,
         }),
       });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
 
       if (!response.body) {
         throw new Error('No response body');
@@ -176,12 +170,12 @@ export const useWorkflowBuilder = () => {
     if (!session.sessionId) return null;
 
     try {
-      const response = await fetchWithTimeout(
-        `${WORKFLOW_BUILDER_CONFIG.BASE_URL}${WORKFLOW_BUILDER_CONFIG.GENERATE_FINALIZE_ENDPOINT}?session_id=${session.sessionId}`
+      const response = await client.get(
+        `${WORKFLOW_BUILDER_CONFIG.GENERATE_FINALIZE_ENDPOINT}?session_id=${session.sessionId}`
       );
 
-      if (response.ok) {
-        const config = await response.json();
+      if (response.status === 200) {
+        const config = response.data;
         setSession(prev => ({
           ...prev,
           finalConfig: config,
@@ -191,7 +185,11 @@ export const useWorkflowBuilder = () => {
       }
 
       return null;
-    } catch (error) {
+    } catch (error: any) {
+      // 202 means not finalized yet, not an error
+      if (error.response?.status === 202) {
+        return null;
+      }
       console.error('Failed to check finalization:', error);
       return null;
     }
@@ -203,9 +201,8 @@ export const useWorkflowBuilder = () => {
     try {
       setSession(prev => ({ ...prev, isLoading: true }));
 
-      await fetchWithTimeout(`${WORKFLOW_BUILDER_CONFIG.BASE_URL}${WORKFLOW_BUILDER_CONFIG.RESET_ENDPOINT}`, {
-        method: 'POST',
-        body: JSON.stringify({ session_id: session.sessionId }),
+      await client.post(WORKFLOW_BUILDER_CONFIG.RESET_ENDPOINT, {
+        session_id: session.sessionId,
       });
 
       setSession(prev => ({
@@ -227,11 +224,11 @@ export const useWorkflowBuilder = () => {
     if (!session.sessionId) return [];
 
     try {
-      const response = await fetchWithTimeout(
-        `${WORKFLOW_BUILDER_CONFIG.BASE_URL}/chat/?session_id=${session.sessionId}`
+      const response = await client.get(
+        `/chat/?session_id=${session.sessionId}`
       );
 
-      const text = await response.text();
+      const text = response.data;
       const lines = text.trim().split('\n');
       const messages: Message[] = [];
 

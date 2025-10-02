@@ -4,6 +4,7 @@ import { Input } from '../ui/Input';
 import nodeConfigs from './config/nodeConfigs.json';
 import { useCredentials, useAgents } from '../../hooks/useAPI';
 import { APP_CONFIG } from '../../lib/config';
+import { api } from '../../lib/api';
 
 interface NodeConfigModalProps {
   isOpen: boolean;
@@ -28,6 +29,12 @@ export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave }:
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
 
+  // Schema inspection state
+  const [schemaData, setSchemaData] = useState<any>(null);
+  const [schemaLoading, setSchemaLoading] = useState(false);
+  const [schemaError, setSchemaError] = useState<string | null>(null);
+  const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
+
   // Get node configuration from JSON
   const nodeConfig: NodeConfig = (nodeConfigs as any)[nodeType];
 
@@ -36,19 +43,44 @@ export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave }:
   const { data: agents, loading: agentsLoading, error: agentsError } = useAgents();
 
   useEffect(() => {
-    if (isOpen && nodeData?.config) {
-      setConfig(nodeData.config);
-    } else if (isOpen) {
-      // Initialize with default values
-      const defaultConfig: any = {};
-      nodeConfig?.fields?.forEach(field => {
-        if (field.default !== undefined) {
-          defaultConfig[field.name] = field.default;
-        }
+    // Debug logging
+    if (isOpen) {
+      console.log('[NodeConfigModal] Opening modal:', {
+        nodeType,
+        nodeData,
+        hasConfig: !!nodeData?.config,
+        configKeys: nodeData?.config ? Object.keys(nodeData.config) : [],
+        config: nodeData?.config
       });
-      setConfig(defaultConfig);
     }
-  }, [isOpen, nodeData, nodeConfig]);
+
+    if (isOpen) {
+      // Check if we have existing config with actual values (not just 'label')
+      const hasExistingConfig = nodeData?.config &&
+        Object.keys(nodeData.config).length > 0 &&
+        Object.keys(nodeData.config).some(key => key !== 'label' && nodeData.config[key]);
+
+      if (hasExistingConfig) {
+        // Has existing config - use it
+        console.log('[NodeConfigModal] Loading existing config:', nodeData.config);
+        setConfig(nodeData.config);
+      } else {
+        // No config or only has label - initialize with defaults
+        console.log('[NodeConfigModal] Initializing with defaults');
+        const defaultConfig: any = {};
+        nodeConfig?.fields?.forEach(field => {
+          if (field.default !== undefined) {
+            defaultConfig[field.name] = field.default;
+          }
+        });
+        // If there's a label, preserve it
+        if (nodeData?.config?.label) {
+          defaultConfig.label = nodeData.config.label;
+        }
+        setConfig(defaultConfig);
+      }
+    }
+  }, [isOpen, nodeData, nodeType, nodeConfig]);
 
   const handleFieldChange = (fieldName: string, value: any) => {
     setConfig((prev: any) => ({
@@ -122,6 +154,38 @@ export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave }:
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleInspectSchema = async () => {
+    const credentialId = config.credential_id;
+    if (!credentialId) {
+      setSchemaError('Please select a database credential first');
+      return;
+    }
+
+    setSchemaLoading(true);
+    setSchemaError(null);
+
+    try {
+      const schema = await api.inspectDatabaseSchema(Number(credentialId));
+      setSchemaData(schema);
+    } catch (error: any) {
+      setSchemaError(error.response?.data?.error || error.message || 'Failed to inspect schema');
+    } finally {
+      setSchemaLoading(false);
+    }
+  };
+
+  const toggleTableExpansion = (tableName: string) => {
+    setExpandedTables(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(tableName)) {
+        newSet.delete(tableName);
+      } else {
+        newSet.add(tableName);
+      }
+      return newSet;
+    });
   };
 
   const shouldShowField = (field: any) => {
@@ -285,6 +349,105 @@ export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave }:
                 Total credentials: {credentials?.results?.length || 0},
                 Filtered: {filteredCredentials.length}
                 {field.category_filter && ` (filter: ${field.category_filter})`}
+              </div>
+            )}
+
+            {/* Schema Inspector for Database Nodes */}
+            {nodeType === 'database' && field.name === 'credential_id' && (
+              <div className="mt-2">
+                <button
+                  type="button"
+                  onClick={handleInspectSchema}
+                  disabled={!fieldValue || schemaLoading}
+                  className="text-sm px-3 py-1.5 bg-[#1173d4] hover:bg-[#0d5aa7] disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded flex items-center gap-1 transition-colors"
+                >
+                  <span className="material-symbols-outlined text-sm">
+                    {schemaLoading ? 'progress_activity' : 'schema'}
+                  </span>
+                  {schemaLoading ? 'Loading Schema...' : 'View Schema'}
+                </button>
+
+                {schemaError && (
+                  <div className="mt-2 text-red-400 text-xs bg-red-500/10 border border-red-500/20 rounded p-2">
+                    {schemaError}
+                  </div>
+                )}
+
+                {schemaData && (
+                  <div className="mt-3 bg-[#0a1219] border border-[#374151] rounded-lg p-3 max-h-96 overflow-y-auto">
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="text-sm font-medium text-white flex items-center gap-2">
+                        <span className="material-symbols-outlined text-base">database</span>
+                        {schemaData.database_name} ({schemaData.database_type})
+                      </h4>
+                      <span className="text-xs text-gray-400">{schemaData.tables.length} tables</span>
+                    </div>
+
+                    <div className="space-y-2">
+                      {schemaData.tables.map((tableName: string) => {
+                        const tableSchema = schemaData.schema[tableName];
+                        const isExpanded = expandedTables.has(tableName);
+
+                        return (
+                          <div key={tableName} className="border border-[#374151] rounded">
+                            <button
+                              type="button"
+                              onClick={() => toggleTableExpansion(tableName)}
+                              className="w-full px-3 py-2 flex items-center justify-between hover:bg-[#111a22] transition-colors"
+                            >
+                              <span className="flex items-center gap-2 text-sm text-white">
+                                <span className="material-symbols-outlined text-sm">
+                                  {isExpanded ? 'expand_more' : 'chevron_right'}
+                                </span>
+                                <span className="material-symbols-outlined text-sm">table</span>
+                                {tableName}
+                              </span>
+                              <span className="text-xs text-gray-400">
+                                {tableSchema.columns.length} columns
+                              </span>
+                            </button>
+
+                            {isExpanded && (
+                              <div className="px-3 pb-3 pt-1 space-y-2">
+                                <div>
+                                  <p className="text-xs text-gray-400 mb-1">Columns:</p>
+                                  <div className="space-y-1">
+                                    {tableSchema.columns.map((col: any, idx: number) => (
+                                      <div
+                                        key={idx}
+                                        className="flex items-center gap-2 text-xs bg-[#111a22] rounded px-2 py-1"
+                                      >
+                                        <span className="material-symbols-outlined text-xs text-gray-400">
+                                          {col.nullable ? 'toggle_off' : 'toggle_on'}
+                                        </span>
+                                        <span className="text-white font-mono">{col.name}</span>
+                                        <span className="text-gray-400">({col.type})</span>
+                                        {!col.nullable && (
+                                          <span className="text-red-400 text-[10px]">NOT NULL</span>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                {tableSchema.sample_data && tableSchema.sample_data.length > 0 && (
+                                  <div>
+                                    <p className="text-xs text-gray-400 mb-1">Sample Data:</p>
+                                    <div className="text-xs bg-[#111a22] rounded p-2 overflow-x-auto">
+                                      <pre className="text-gray-300 font-mono">
+                                        {JSON.stringify(tableSchema.sample_data, null, 2)}
+                                      </pre>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

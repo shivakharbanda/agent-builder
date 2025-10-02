@@ -55,7 +55,8 @@ export default function Workflows() {
             asChild
             leftIcon={<span className="material-symbols-outlined text-base">account_tree</span>}
           >
-            <Link to="/workflows/create">Create Workflow</Link>
+            {/* TODO: Add project selector modal, for now defaulting to project 1 */}
+            <Link to="/workflows/create/1">Create Workflow</Link>
           </Button>
         </div>
 
@@ -74,7 +75,8 @@ export default function Workflows() {
                 asChild
                 leftIcon={<span className="material-symbols-outlined text-base">account_tree</span>}
               >
-                <Link to="/workflows/create">Create Your First Workflow</Link>
+                {/* TODO: Add project selector modal, for now defaulting to project 1 */}
+                <Link to="/workflows/create/1">Create Your First Workflow</Link>
               </Button>
             }
           />

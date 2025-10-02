@@ -581,6 +581,33 @@ class AgentBuilderAPI {
     const response = await this.client.post(`/workflows/${workflowId}/execute/`, data);
     return response.data;
   }
+
+  // Workflow Builder Tools API
+  async inspectDatabaseSchema(credentialId: number): Promise<{
+    credential_id: number;
+    credential_name: string;
+    database_type: string;
+    database_name: string;
+    tables: string[];
+    schema: Record<string, {
+      table_type: string;
+      columns: Array<{
+        name: string;
+        type: string;
+        nullable: boolean;
+        default?: string;
+      }>;
+      constraints: any[];
+      indexes: any[];
+      sample_data: any[];
+    }>;
+  }> {
+    const response = await this.client.post(
+      '/builder-tools/inspect_schema/',
+      { credential_id: credentialId }
+    );
+    return response.data;
+  }
 }
 
 // Create and export a singleton instance

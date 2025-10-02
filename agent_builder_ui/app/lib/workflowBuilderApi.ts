@@ -1,5 +1,6 @@
 import axios, { type AxiosInstance } from 'axios';
 import { WORKFLOW_BUILDER_CONFIG, APP_CONFIG } from './config';
+import { api } from './api';
 
 export interface WorkflowBuilderMessage {
   role: 'user' | 'model';
@@ -94,11 +95,39 @@ class WorkflowBuilderAPIClient {
     }
   }
 
-  async createSession(): Promise<WorkflowBuilderSession> {
-    const response = await this.client.post<WorkflowBuilderSession>(
-      WORKFLOW_BUILDER_CONFIG.SESSION_ENDPOINT
+  async registerSessionWithDjango(projectId: number): Promise<{session_id: string}> {
+    /**
+     * Step 1: Register session with Django backend
+     * This creates WorkflowBuilderSession record with user/project mapping
+     */
+    const response = await (api as any).client.post<{session_id: string}>(
+      '/builder-tools/register_session/',
+      { project_id: projectId }
     );
     return response.data;
+  }
+
+  async initializeFastAPISession(sessionId: string): Promise<WorkflowBuilderSession> {
+    /**
+     * Step 2: Initialize FastAPI session with session_id from Django
+     * FastAPI is stateless - just sets up usage tracking
+     */
+    const response = await this.client.post<WorkflowBuilderSession>(
+      WORKFLOW_BUILDER_CONFIG.SESSION_ENDPOINT,
+      { session_id: sessionId }
+    );
+    return response.data;
+  }
+
+  async createSession(projectId: number): Promise<WorkflowBuilderSession> {
+    /**
+     * Complete two-step session creation:
+     * 1. Register with Django (gets session_id, maps to user/project)
+     * 2. Initialize with FastAPI (sets up chat)
+     */
+    const { session_id } = await this.registerSessionWithDjango(projectId);
+    const session = await this.initializeFastAPISession(session_id);
+    return session;
   }
 
   async resetSession(sessionId: string): Promise<void> {

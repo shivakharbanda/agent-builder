@@ -13,9 +13,10 @@ interface ChatMessage {
 interface ChatInterfaceProps {
   onCommand?: (command: string) => void;
   onWorkflowConfigComplete?: (config: any) => void;
+  projectId?: number;
 }
 
-export function ChatInterface({ onCommand, onWorkflowConfigComplete }: ChatInterfaceProps) {
+export function ChatInterface({ onCommand, onWorkflowConfigComplete, projectId = 1 }: ChatInterfaceProps) {
   const { session, createSession, sendMessage: sendWorkflowMessage, checkFinalization } = useWorkflowBuilder();
   const [inputValue, setInputValue] = useState('');
   const prevCompleteState = useRef(false);
@@ -39,7 +40,7 @@ export function ChatInterface({ onCommand, onWorkflowConfigComplete }: ChatInter
   // Initialize chat session
   const createNewSession = async () => {
     try {
-      await createSession();
+      await createSession(projectId);
     } catch (error) {
       console.error('Failed to create session:', error);
     }

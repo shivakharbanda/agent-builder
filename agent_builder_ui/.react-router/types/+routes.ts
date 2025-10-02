@@ -38,8 +38,10 @@ type Pages = {
   "/workflows": {
     params: {};
   };
-  "/workflows/create": {
-    params: {};
+  "/workflows/create/:projectId": {
+    params: {
+      "projectId": string;
+    };
   };
   "/workflows/:id": {
     params: {
@@ -70,7 +72,7 @@ type Pages = {
 type RouteFiles = {
   "root.tsx": {
     id: "root";
-    page: "/" | "/login" | "/projects" | "/agents" | "/agents/create" | "/agents/:id" | "/agents/:id/edit" | "/workflows" | "/workflows/create" | "/workflows/:id" | "/workflows/:id/edit" | "/tools" | "/credentials" | "/credentials/create" | "/credentials/:id/edit";
+    page: "/" | "/login" | "/projects" | "/agents" | "/agents/create" | "/agents/:id" | "/agents/:id/edit" | "/workflows" | "/workflows/create/:projectId" | "/workflows/:id" | "/workflows/:id/edit" | "/tools" | "/credentials" | "/credentials/create" | "/credentials/:id/edit";
   };
   "routes/dashboard.tsx": {
     id: "routes/dashboard";
@@ -106,7 +108,7 @@ type RouteFiles = {
   };
   "routes/workflows/create.tsx": {
     id: "routes/workflows/create";
-    page: "/workflows/create";
+    page: "/workflows/create/:projectId";
   } | {
     id: "workflow-edit";
     page: "/workflows/:id/edit";

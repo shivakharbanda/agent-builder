@@ -11,7 +11,6 @@ dependencies = [
     "djangorestframework>=3.16.1",
     "django-cors-headers>=4.7.0",
     "djangorestframework-simplejwt>=5.5.0",
-    "dq-db-manager",
     "fastapi>=0.118.0",
     "uvicorn>=0.37.0",
     "pydantic-ai>=1.0.11",
@@ -19,7 +18,9 @@ dependencies = [
     "aiosqlite>=0.21.0",
     "python-dotenv>=1.1.1",
     "pydantic-ai-slim[google]>=1.0.11",
+    "psycopg2>=2.9.10",
+    "dq-db-manager",
 ]
 
 [tool.uv.sources]
-dq-db-manager = { git = "https://github.com/Data-Quotient/dq_db_manager.git" }
+dq-db-manager = { path = "../../personal-projects/dq_db_manager" }

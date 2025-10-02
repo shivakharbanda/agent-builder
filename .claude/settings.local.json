@@ -3,7 +3,10 @@
     "allow": [
       "Bash(uv run:*)",
       "Bash(npm install:*)",
-      "Bash(npm run typecheck:*)"
+      "Bash(npm run typecheck:*)",
+      "Read(//mnt/c/Users/shiva/Desktop/personal-projects/dq_db_manager/dq_db_manager/**)",
+      "Read(//mnt/c/Users/shiva/Desktop/personal-projects/dq_db_manager/dq_db_manager/handlers/**)",
+      "WebFetch(domain:ai.pydantic.dev)"
     ],
     "deny": [],
     "ask": []

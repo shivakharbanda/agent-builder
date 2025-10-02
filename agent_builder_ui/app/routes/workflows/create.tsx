@@ -10,6 +10,7 @@ import type { WorkflowConfig } from '../../components/workflow/types';
 import { NodePalette } from '../../components/workflow/NodePalette';
 import { ChatInterface } from '../../components/workflow/ChatInterface';
 import { ConfigViewer } from '../../components/workflow/ConfigViewer';
+import { ExecutionResultModal } from '../../components/workflow/ExecutionResultModal';
 import { WorkflowErrorBoundary } from '../../components/ui/ErrorBoundary';
 import { useFormSubmit } from '../../hooks/useAPI';
 import { api } from '../../lib/api';
@@ -28,6 +29,7 @@ export default function CreateWorkflow() {
   const navigate = useNavigate();
   const params = useParams();
   const isEditMode = Boolean(params.id);
+  const projectId = params.projectId ? parseInt(params.projectId) : undefined;
   const [searchValue, setSearchValue] = useState('');
   const [workflowName, setWorkflowName] = useState('Untitled Workflow');
   const [workflowDescription, setWorkflowDescription] = useState('');
@@ -57,6 +59,19 @@ export default function CreateWorkflow() {
   const [canvasKey, setCanvasKey] = useState(0);
   const { toasts, showToast, removeToast } = useToast();
 
+  // Execution state
+  const [executionState, setExecutionState] = useState<{
+    isExecuting: boolean;
+    results: any;
+    error: string | null;
+    showModal: boolean;
+  }>({
+    isExecuting: false,
+    results: null,
+    error: null,
+    showModal: false,
+  });
+
   // Form submission hook - use different API based on mode
   const { loading: saving, error: saveError, submit: submitWorkflow } = useFormSubmit(
     async (data: any) => {
@@ -83,8 +98,17 @@ export default function CreateWorkflow() {
           setWorkflowDescription(workflow.description);
 
           // Fix properties mapping - properties is at root level, not in configuration
+          // Merge configuration nodes with backend node IDs
+          const nodesWithDbIds = workflow.configuration.nodes.map((configNode: any, index: number) => {
+            const backendNode = workflow.nodes[index]; // Match by position
+            return {
+              ...configNode,
+              dbId: backendNode?.id // Add database ID from backend nodes array
+            };
+          });
+
           setWorkflowConfig({
-            nodes: workflow.configuration.nodes,
+            nodes: nodesWithDbIds,
             edges: workflow.configuration.edges,
             metadata: workflow.configuration.metadata,
             properties: workflow.properties  // From root level!
@@ -233,21 +257,65 @@ export default function CreateWorkflow() {
     }
   };
 
-  const handleExecuteNode = async (nodeId: string) => {
-    if (!isEditMode) {
+  const handleExecuteNode = async (nodeId: string, nodeType?: string, nodeData?: any) => {
+    const workflowId = params.id;
+
+    // Check if workflow has been saved at least once
+    if (!workflowId) {
       showToast('Please save the workflow before executing nodes', 'warning');
       return;
     }
+
+    // Warn about unsaved changes but don't block execution
+    // (Execution will use the last saved node configuration)
     if (hasUnsavedChanges) {
-      showToast('Please save your changes before executing', 'warning');
+      console.warn('Executing with unsaved changes - using last saved configuration');
+    }
+
+    // Extract database ID from nodeData - this is the integer ID from backend
+    const dbNodeId = nodeData?.dbId;
+
+    if (!dbNodeId) {
+      showToast('Node database ID not found. Please save the workflow first.', 'error');
       return;
     }
+
+    console.log('DEBUG: Executing node with:', {
+      workflowId,
+      nodeId,
+      dbNodeId,
+      nodeData
+    });
+
+    // Show executing state
+    setExecutionState({
+      isExecuting: true,
+      results: null,
+      error: null,
+      showModal: true,
+    });
+
     try {
-      const result = await api.executeWorkflow(Number(params.id), Number(nodeId));
-      showToast('Node execution started', 'success');
-      console.log('Node execution result:', result);
-    } catch (error) {
-      showToast('Failed to execute node', 'error');
+      const result = await api.executeWorkflow(Number(workflowId), Number(dbNodeId));
+
+      // Show results in modal
+      setExecutionState({
+        isExecuting: false,
+        results: result,
+        error: null,
+        showModal: true,
+      });
+
+      showToast('Node executed successfully', 'success');
+    } catch (error: any) {
+      // Show error in modal
+      setExecutionState({
+        isExecuting: false,
+        results: error.response?.data || null,
+        error: error.response?.data?.error || error.message || 'Unknown error occurred',
+        showModal: true,
+      });
+
       console.error('Node execution error:', error);
     }
   };
@@ -344,6 +412,7 @@ export default function CreateWorkflow() {
             <ChatInterface
               onCommand={handleChatCommand}
               onWorkflowConfigComplete={handleWorkflowConfigComplete}
+              projectId={projectId || 1}
             />
           </aside>
 
@@ -387,6 +456,15 @@ export default function CreateWorkflow() {
 
       {/* Toast Notifications */}
       <ToastContainer toasts={toasts} onRemove={removeToast} />
+
+      {/* Execution Result Modal */}
+      <ExecutionResultModal
+        isOpen={executionState.showModal}
+        onClose={() => setExecutionState({ ...executionState, showModal: false })}
+        results={executionState.results}
+        error={executionState.error}
+        isExecuting={executionState.isExecuting}
+      />
     </Layout>
   );
 }
