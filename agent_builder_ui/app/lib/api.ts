@@ -583,9 +583,14 @@ class AgentBuilderAPI {
   }
 
   // Workflow Execution API
-  async executeWorkflow(workflowId: number, nodeId?: number): Promise<any> {
+  async executeWorkflow(workflowId: number, nodeId?: number): Promise<{execution_id: number, execution_type: string, status: string, message: string}> {
     const data = nodeId ? { node_id: nodeId } : {};
     const response = await this.client.post(`/workflows/${workflowId}/execute/`, data);
+    return response.data;
+  }
+
+  async getExecutionStatus(executionId: number): Promise<any> {
+    const response = await this.client.get(`/workflows/executions/${executionId}/status/`);
     return response.data;
   }
 

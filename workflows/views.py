@@ -83,11 +83,120 @@ class WorkflowViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def execute(self, request, pk=None):
-        """Execute workflow or a specific node within the workflow
+        """Execute workflow or single node asynchronously
 
         Request body:
-        - {} - Execute full workflow
         - {"node_id": <id>} - Execute specific node only
+        - {} - Execute entire workflow
+
+        Returns:
+        - 202 Accepted with execution_id for polling
+        """
+        import threading
+        from workflows.execution.async_executor import execute_workflow_async
+
+        workflow = self.get_object()
+        node_id = request.data.get('node_id')
+
+        # Determine execution type
+        if node_id:
+            execution_type = 'single_node'
+            target_node_id = int(node_id)
+        else:
+            execution_type = 'full_workflow'
+            target_node_id = None
+
+        # Create execution record
+        execution = WorkflowExecution.objects.create(
+            workflow=workflow,
+            execution_type=execution_type,
+            target_node_id=target_node_id,
+            status='pending',
+            triggered_by='manual',
+            created_by=request.user
+        )
+
+        # Start background execution
+        thread = threading.Thread(
+            target=execute_workflow_async,
+            args=(execution.id,)
+        )
+        thread.daemon = True
+        thread.start()
+
+        # Return immediately
+        return Response({
+            'execution_id': execution.id,
+            'execution_type': execution_type,
+            'status': 'pending',
+            'message': f'{execution_type.replace("_", " ").title()} execution started'
+        }, status=202)
+
+    @action(detail=False, methods=['get'], url_path='executions/(?P<execution_id>[0-9]+)/status')
+    def execution_status(self, request, execution_id=None):
+        """Poll execution status
+
+        Query params:
+        - execution_id: ID of the execution to check
+
+        Returns:
+        - Execution status, progress, and results
+        """
+        try:
+            execution = WorkflowExecution.objects.prefetch_related('node_executions').get(
+                id=execution_id
+            )
+
+            # Build response
+            response = {
+                'execution_id': execution.id,
+                'workflow_id': execution.workflow.id,
+                'execution_type': execution.execution_type,
+                'status': execution.status,
+                'is_complete': execution.status in ['completed', 'failed', 'cancelled'],
+                'progress_percentage': execution.progress_percentage,
+                'progress_message': execution.progress_message,
+                'started_at': execution.started_at.isoformat() if execution.started_at else None,
+                'completed_at': execution.completed_at.isoformat() if execution.completed_at else None,
+                'error_message': execution.error_message,
+                'execution_log': execution.execution_log,
+            }
+
+            # Add node-level details
+            if execution.execution_type == 'full_workflow':
+                response['nodes'] = [
+                    {
+                        'node_id': ne.node_id,
+                        'node_type': ne.node_type,
+                        'status': ne.status,
+                        'started_at': ne.started_at.isoformat() if ne.started_at else None,
+                        'completed_at': ne.completed_at.isoformat() if ne.completed_at else None,
+                        'execution_time_seconds': ne.execution_time_seconds,
+                        'error_message': ne.error_message
+                    }
+                    for ne in execution.node_executions.all()
+                ]
+            else:
+                # Single node - include results in main response
+                node_exec = execution.node_executions.first()
+                if node_exec:
+                    response['results'] = node_exec.results
+                    response['node_id'] = node_exec.node_id
+                    response['node_type'] = node_exec.node_type
+                    response['execution_time'] = node_exec.execution_time_seconds
+
+            return Response(response)
+
+        except WorkflowExecution.DoesNotExist:
+            return Response({'error': 'Execution not found'}, status=404)
+
+    # Remove old synchronous execute logic below
+    @action(detail=True, methods=['post'], url_path='execute_sync')
+    def execute_sync_old(self, request, pk=None):
+        """OLD SYNCHRONOUS EXECUTION - DEPRECATED
+
+        This is kept for reference but should not be used.
+        Use the async execute endpoint instead.
         """
         from django.utils import timezone
         from workflows.execution.node_handlers.factory import NodeFactory

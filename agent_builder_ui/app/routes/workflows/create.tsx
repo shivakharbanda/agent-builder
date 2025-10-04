@@ -17,6 +17,7 @@ import { api } from '../../lib/api';
 import { useToast } from '../../hooks/useToast';
 import { ToastContainer } from '../../components/ui/Toast';
 import { validateWorkflowConfig } from '../../lib/workflowConfigValidator';
+import { useExecutionPolling } from '../../hooks/useExecutionPolling';
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -58,6 +59,7 @@ export default function CreateWorkflow() {
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [canvasKey, setCanvasKey] = useState(0);
   const { toasts, showToast, removeToast } = useToast();
+  const { pollExecution } = useExecutionPolling();
 
   // Execution state
   const [executionState, setExecutionState] = useState<{
@@ -299,33 +301,70 @@ export default function CreateWorkflow() {
     });
 
     try {
-      const result = await api.executeWorkflow(Number(workflowId), Number(dbNodeId));
+      // Start async execution
+      const { execution_id } = await api.executeWorkflow(Number(workflowId), Number(dbNodeId));
 
-      // Cache the results by frontend node ID (for input mapping dropdown)
-      setNodeExecutionCache(prev => ({
-        ...prev,
-        [nodeId]: result.results
-      }));
+      console.log('[CreateWorkflow] Execution started:', execution_id);
 
-      // Show results in modal
-      setExecutionState({
-        isExecuting: false,
-        results: result,
-        error: null,
-        showModal: true,
+      // Poll for results
+      await pollExecution(execution_id, {
+        onProgress: (status, progressPercentage, progressMessage) => {
+          console.log('[CreateWorkflow] Progress:', { status, progressPercentage, progressMessage });
+          setExecutionState(prev => ({
+            ...prev,
+            results: {
+              ...prev.results,
+              status,
+              progress_percentage: progressPercentage,
+              progress_message: progressMessage
+            }
+          }));
+        },
+        onComplete: (executionResult) => {
+          console.log('[CreateWorkflow] Completed:', executionResult);
+
+          // Cache the results by frontend node ID (for input mapping dropdown)
+          setNodeExecutionCache(prev => ({
+            ...prev,
+            [nodeId]: executionResult.results
+          }));
+
+          // Show results in modal
+          setExecutionState({
+            isExecuting: false,
+            results: executionResult,
+            error: null,
+            showModal: true,
+          });
+
+          showToast('Node executed successfully', 'success');
+        },
+        onError: (error) => {
+          console.error('[CreateWorkflow] Execution error:', error);
+
+          setExecutionState({
+            isExecuting: false,
+            results: null,
+            error: error,
+            showModal: true,
+          });
+
+          showToast('Node execution failed', 'error');
+        }
       });
 
-      showToast('Node executed successfully', 'success');
     } catch (error: any) {
-      // Show error in modal
+      // Handle initial request error
+      console.error('[CreateWorkflow] Failed to start execution:', error);
+
       setExecutionState({
         isExecuting: false,
         results: error.response?.data || null,
-        error: error.response?.data?.error || error.message || 'Unknown error occurred',
+        error: error.response?.data?.error || error.message || 'Failed to start execution',
         showModal: true,
       });
 
-      console.error('Node execution error:', error);
+      showToast('Failed to start execution', 'error');
     }
   };
 

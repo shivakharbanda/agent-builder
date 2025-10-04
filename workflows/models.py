@@ -69,7 +69,7 @@ class WorkflowProperties(BaseModel):
 class WorkflowExecution(BaseModel):
     """Execution tracking and status for workflow runs"""
     STATUS_CHOICES = [
-        ('draft', 'Draft'),
+        ('pending', 'Pending'),
         ('running', 'Running'),
         ('completed', 'Completed'),
         ('failed', 'Failed'),
@@ -84,13 +84,25 @@ class WorkflowExecution(BaseModel):
         ('webhook', 'Webhook'),
     ]
 
+    EXECUTION_TYPE_CHOICES = [
+        ('single_node', 'Single Node'),
+        ('full_workflow', 'Full Workflow'),
+    ]
+
     workflow = models.ForeignKey(Workflow, on_delete=models.CASCADE, related_name='executions')
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
     execution_log = models.JSONField(default=dict, blank=True)
     error_message = models.TextField(blank=True)
     triggered_by = models.CharField(max_length=20, choices=TRIGGER_CHOICES, default='manual')
+
+    # New fields for async execution
+    execution_type = models.CharField(max_length=20, choices=EXECUTION_TYPE_CHOICES, default='single_node')
+    target_node_id = models.IntegerField(null=True, blank=True, help_text='For single node execution')
+    current_node_id = models.IntegerField(null=True, blank=True, help_text='Currently executing node')
+    progress_percentage = models.FloatField(default=0.0)
+    progress_message = models.TextField(blank=True)
 
     def __str__(self):
         return f"{self.workflow.name} - {self.status} ({self.created_at})"
@@ -98,6 +110,34 @@ class WorkflowExecution(BaseModel):
     class Meta:
         db_table = 'workflows_workflow_execution'
         ordering = ['-created_at']
+
+
+class NodeExecution(BaseModel):
+    """Track individual node execution within a workflow run"""
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('running', 'Running'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+        ('skipped', 'Skipped'),
+    ]
+
+    workflow_execution = models.ForeignKey(WorkflowExecution, on_delete=models.CASCADE, related_name='node_executions')
+    node_id = models.IntegerField(help_text='WorkflowNode ID')
+    node_type = models.CharField(max_length=50)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    results = models.JSONField(default=dict, blank=True)
+    error_message = models.TextField(blank=True)
+    execution_time_seconds = models.FloatField(null=True, blank=True)
+
+    def __str__(self):
+        return f"Node {self.node_id} ({self.node_type}) - {self.status}"
+
+    class Meta:
+        db_table = 'workflows_node_execution'
+        ordering = ['workflow_execution', 'started_at']
 
 
 class WorkflowNode(BaseModel):
