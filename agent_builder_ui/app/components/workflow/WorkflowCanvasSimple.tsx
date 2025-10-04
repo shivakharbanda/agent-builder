@@ -267,6 +267,7 @@ export function WorkflowCanvasSimple({ onConfigChange }: WorkflowCanvasProps) {
       case 'agent':
         return {
           agentId: null,
+          llm_credential_id: null,
           prompts: [],
           tools: []
         };

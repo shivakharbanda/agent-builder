@@ -63,12 +63,13 @@ class AgentListSerializer(serializers.ModelSerializer):
     project_name = serializers.CharField(source='project.name', read_only=True)
     prompts_count = serializers.SerializerMethodField()
     tools_count = serializers.SerializerMethodField()
+    input_placeholders = serializers.SerializerMethodField()
 
     class Meta:
         model = Agent
         fields = [
             'id', 'name', 'description', 'return_type', 'project_name',
-            'prompts_count', 'tools_count', 'created_at', 'is_active'
+            'prompts_count', 'tools_count', 'input_placeholders', 'created_at', 'is_active'
         ]
 
     def get_prompts_count(self, obj):
@@ -76,6 +77,30 @@ class AgentListSerializer(serializers.ModelSerializer):
 
     def get_tools_count(self, obj):
         return obj.agent_tools.filter(is_active=True).count()
+
+    def get_input_placeholders(self, obj):
+        """
+        Extract all unique placeholders from agent prompts.
+        Searches for {{placeholder_name}} patterns in prompt content.
+
+        Returns:
+            List of unique placeholder names found across all prompts
+        """
+        import re
+
+        placeholders = set()
+
+        # Get all active prompts for this agent
+        prompts = obj.prompts.filter(is_active=True)
+
+        for prompt in prompts:
+            # Extract placeholders using regex pattern {{placeholder_name}}
+            pattern = r'\{\{(\w+)\}\}'
+            matches = re.findall(pattern, prompt.content)
+            placeholders.update(matches)
+
+        # Return sorted list for consistent ordering
+        return sorted(list(placeholders))
 
 
 class PromptCreateSerializer(serializers.ModelSerializer):

@@ -105,8 +105,126 @@ class WorkflowViewSet(viewsets.ModelViewSet):
                 # Get workflow node from database
                 workflow_node = WorkflowNode.objects.get(id=node_id, workflow=workflow, is_active=True)
 
-                # Create node instance using factory
                 started_at = timezone.now()
+
+                # Determine if this node needs upstream data
+                processor_node_types = ['agent', 'filter', 'script', 'conditional', 'output']
+                needs_input = workflow_node.node_type in processor_node_types
+
+                input_data = None
+
+                if needs_input:
+                    # Build mapping from visual node IDs to database node IDs
+                    # Visual IDs: "node_1", "node_2" from workflow.configuration
+                    # Database IDs: 78, 79 from WorkflowNode.id
+                    visual_to_db_map = {}
+                    db_to_visual_map = {}
+
+                    visual_nodes = workflow.configuration.get('nodes', [])
+                    db_nodes = WorkflowNode.objects.filter(workflow=workflow, is_active=True).order_by('position')
+
+                    # Match nodes by type and configuration keys
+                    for visual_node in visual_nodes:
+                        visual_id = visual_node.get('id')
+                        visual_type = visual_node.get('type')
+                        visual_config = visual_node.get('config', {})
+
+                        # Find matching database node
+                        for db_node in db_nodes:
+                            if db_node.node_type != visual_type:
+                                continue
+
+                            # Match by key configuration fields
+                            if visual_type == 'database' and visual_config.get('credential_id') == db_node.configuration.get('credential_id'):
+                                visual_to_db_map[visual_id] = db_node.id
+                                db_to_visual_map[db_node.id] = visual_id
+                                break
+                            elif visual_type == 'agent' and visual_config.get('agent_id') == db_node.configuration.get('agent_id'):
+                                visual_to_db_map[visual_id] = db_node.id
+                                db_to_visual_map[db_node.id] = visual_id
+                                break
+                            elif visual_type == 'output' and visual_config.get('table_name') == db_node.configuration.get('table_name'):
+                                visual_to_db_map[visual_id] = db_node.id
+                                db_to_visual_map[db_node.id] = visual_id
+                                break
+                            elif visual_type in ['filter', 'script', 'conditional']:
+                                # For other types, match by position
+                                visual_to_db_map[visual_id] = db_node.id
+                                db_to_visual_map[db_node.id] = visual_id
+                                break
+
+                    print(f"DEBUG: Node ID mapping: {db_to_visual_map}")
+
+                    # Get visual node ID for the target node
+                    target_visual_id = db_to_visual_map.get(node_id)
+                    if not target_visual_id:
+                        print(f"ERROR: Could not find visual node ID for database node {node_id}")
+
+                    # Get workflow edges from configuration
+                    edges = workflow.configuration.get('edges', [])
+
+                    # Find upstream nodes connected to this node using visual IDs
+                    upstream_edges = []
+                    if target_visual_id:
+                        for edge in edges:
+                            if edge.get('target') == target_visual_id:
+                                upstream_edges.append(edge)
+
+                    print(f"DEBUG: Found {len(upstream_edges)} upstream edges for node {node_id} (visual ID: {target_visual_id})")
+
+                    # Execute upstream nodes and collect results
+                    if upstream_edges:
+                        upstream_results = {}
+
+                        for edge in upstream_edges:
+                            source_visual_id = edge.get('source', '')
+
+                            # Convert visual ID to database ID
+                            source_db_id = visual_to_db_map.get(source_visual_id)
+
+                            if not source_db_id:
+                                print(f"ERROR: Could not find database ID for visual node {source_visual_id}")
+                                continue
+
+                            try:
+                                print(f"DEBUG: Executing upstream node {source_db_id} (visual ID: {source_visual_id})")
+
+                                # Get source node
+                                source_node = WorkflowNode.objects.get(
+                                    id=source_db_id,
+                                    workflow=workflow,
+                                    is_active=True
+                                )
+
+                                # Create and execute source node instance
+                                source_instance = NodeFactory.create_node(
+                                    node_id=source_node.id,
+                                    node_type=source_node.node_type,
+                                    configuration=source_node.configuration,
+                                    workflow_id=workflow.id,
+                                    execution_id=0,
+                                    position=source_node.position
+                                )
+
+                                # Execute source node (recursively handles its upstream if needed)
+                                source_results = source_instance.run()
+                                upstream_results[source_visual_id] = source_results
+
+                                print(f"DEBUG: Upstream node {source_db_id} returned {len(source_results) if isinstance(source_results, list) else 'non-list'} results")
+
+                            except (WorkflowNode.DoesNotExist) as e:
+                                print(f"ERROR: Failed to execute upstream node {source_visual_id}: {e}")
+                                continue
+
+                        # For agent nodes, pass the first upstream result directly
+                        # (agent expects list of dicts, not nested dict by node ID)
+                        if workflow_node.node_type == 'agent' and upstream_results:
+                            input_data = list(upstream_results.values())[0]
+                            print(f"DEBUG: Passing {len(input_data) if isinstance(input_data, list) else 'non-list'} records to agent node")
+                        else:
+                            input_data = upstream_results
+
+                # Create target node instance
                 node_instance = NodeFactory.create_node(
                     node_id=workflow_node.id,
                     node_type=workflow_node.node_type,
@@ -116,8 +234,8 @@ class WorkflowViewSet(viewsets.ModelViewSet):
                     position=workflow_node.position
                 )
 
-                # Execute the node
-                results = node_instance.run()
+                # Execute the node with input data
+                results = node_instance.run(input_data)
                 completed_at = timezone.now()
                 execution_time = (completed_at - started_at).total_seconds()
 
@@ -403,6 +521,7 @@ from agents.models import Agent
 from agents.serializers import AgentListSerializer
 from dq_db_manager.models.postgres import DataSourceMetadata
 from workflows.authentication import SessionIDAuthentication
+from workflows.execution.node_handlers.database_executor import DatabaseExecutor
 from rest_framework.permissions import IsAuthenticated
 
 
@@ -706,5 +825,113 @@ class WorkflowBuilderToolsViewSet(viewsets.ViewSet):
         except Exception as e:
             return Response(
                 {'error': f'Schema inspection failed: {str(e)}'},
+                status=500
+            )
+
+    @action(detail=False, methods=['post'], url_path='test_query')
+    def test_query(self, request):
+        """
+        Execute a test query to get column names and sample data.
+
+        Request body:
+            - credential_id: Database credential ID
+            - query: SQL query to execute
+            - session_id: Optional workflow builder session ID (for FastAPI tools)
+
+        Returns:
+            - columns: List of column names from query result
+            - data: Sample data (max 1 row for safety)
+            - row_count: Number of rows returned
+        """
+        from workflows.models import WorkflowBuilderSession
+
+        credential_id = request.data.get('credential_id')
+        query = request.data.get('query')
+        session_id = request.data.get('session_id')
+
+        if not credential_id or not query:
+            return Response(
+                {'error': 'credential_id and query are required'},
+                status=400
+            )
+
+        # Determine user: from session_id (FastAPI) or request.user (direct UI call)
+        if session_id:
+            try:
+                session = WorkflowBuilderSession.objects.get(
+                    session_id=session_id,
+                    is_active=True
+                )
+                user = session.created_by
+            except WorkflowBuilderSession.DoesNotExist:
+                return Response(
+                    {'error': f'Session {session_id} not found or expired'},
+                    status=404
+                )
+        else:
+            user = request.user
+
+        try:
+            # Fetch credential - ensure it belongs to the determined user (security)
+            credential = Credential.objects.select_related(
+                'credential_type', 'credential_type__category'
+            ).get(
+                id=credential_id,
+                user=user,
+                is_deleted=False,
+                is_active=True
+            )
+
+            # Verify it's a database credential
+            if credential.credential_type.category.name != 'RDBMS':
+                return Response(
+                    {'error': f'Credential must be RDBMS type, got {credential.credential_type.category.name}'},
+                    status=400
+                )
+
+            # Get connection details
+            db_type = credential.credential_type.type_name
+            connection_details = credential.get_connection_details()
+
+            # Add LIMIT 1 for safety if not already present
+            safe_query = query.strip()
+            if 'LIMIT' not in safe_query.upper():
+                safe_query += ' LIMIT 1'
+
+            # Execute query using DatabaseExecutor (same pattern as database node handler)
+            results = DatabaseExecutor.execute_query(
+                db_type=db_type,
+                connection_details=connection_details,
+                query=safe_query,
+                placeholders={}
+            )
+
+            # Extract column names and data
+            if results and len(results) > 0:
+                columns = list(results[0].keys())
+                data = results  # Already list of dicts
+            else:
+                columns = []
+                data = []
+
+            return Response({
+                'columns': columns,
+                'data': data,
+                'row_count': len(results)
+            })
+
+        except Credential.DoesNotExist:
+            return Response(
+                {'error': f'Credential {credential_id} not found or access denied'},
+                status=404
+            )
+        except ValueError as e:
+            return Response(
+                {'error': f'Database type not supported: {str(e)}'},
+                status=400
+            )
+        except Exception as e:
+            return Response(
+                {'error': f'Query execution failed: {str(e)}'},
                 status=500
             )

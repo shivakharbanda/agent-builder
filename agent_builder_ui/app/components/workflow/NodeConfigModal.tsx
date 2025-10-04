@@ -12,6 +12,10 @@ interface NodeConfigModalProps {
   nodeType: string;
   nodeData: any;
   onSave: (config: any) => void;
+  edges?: any[];
+  nodes?: any[];
+  nodeExecutionCache?: Record<string, any>;
+  onExecuteNode?: (nodeId: string) => void;
 }
 
 interface NodeConfig {
@@ -24,7 +28,20 @@ interface NodeConfig {
   outputs?: any[];
 }
 
-export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave }: NodeConfigModalProps) {
+export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave, edges, nodes, nodeExecutionCache, onExecuteNode }: NodeConfigModalProps) {
+  // Debug: Log props received
+  console.log('[NodeConfigModal] Component props:', {
+    isOpen,
+    nodeType,
+    nodeData,
+    edgesCount: edges?.length,
+    edges: edges,
+    nodesCount: nodes?.length,
+    nodes: nodes,
+    hasCacheData: !!nodeExecutionCache,
+    hasExecuteHandler: !!onExecuteNode
+  });
+
   const [config, setConfig] = useState<any>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
@@ -34,6 +51,24 @@ export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave }:
   const [schemaLoading, setSchemaLoading] = useState(false);
   const [schemaError, setSchemaError] = useState<string | null>(null);
   const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
+
+  // Column loading state for input mapping
+  const [columnLoadingState, setColumnLoadingState] = useState<{
+    isLoading: boolean;
+    executingNodes: Set<string>;
+    errors: Record<string, string>;
+  }>({
+    isLoading: false,
+    executingNodes: new Set(),
+    errors: {}
+  });
+
+  // State for loaded columns from database nodes (via manual button click)
+  const [loadedColumns, setLoadedColumns] = useState<Record<string, {
+    columns: string[];
+    data: Record<string, any>[];
+    sourceLabel: string;
+  }>>({});
 
   // Get node configuration from JSON
   const nodeConfig: NodeConfig = (nodeConfigs as any)[nodeType];
@@ -81,6 +116,98 @@ export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave }:
       }
     }
   }, [isOpen, nodeData, nodeType, nodeConfig]);
+
+  // Log connected database nodes when agent node config opens (auto-execute disabled to prevent infinite loops)
+  useEffect(() => {
+    if (!isOpen || nodeType !== 'agent') return;
+    if (!edges || !nodes) return;
+
+    const incomingEdges = edges.filter((edge: any) => edge.target === nodeData?.id);
+    if (incomingEdges.length === 0) return;
+
+    // Find source nodes that are database type
+    const databaseNodes = incomingEdges
+      .map((edge: any) => {
+        const sourceNode = nodes?.find((n: any) => n.id === edge.source);
+        return sourceNode;
+      })
+      .filter((node: any) => {
+        if (!node) return false;
+        return node.type === 'database';
+      });
+
+    if (databaseNodes.length > 0) {
+      console.log('[NodeConfigModal] Connected database nodes detected:');
+      databaseNodes.forEach(node => {
+        const isExecuted = nodeExecutionCache?.[node.id];
+        console.log(`  - ${node.data?.label || node.id} (${isExecuted ? 'executed' : 'not executed yet'})`);
+        if (!isExecuted) {
+          console.log(`    → User needs to execute this node manually to see columns in input mapping`);
+        }
+      });
+    }
+  }, [isOpen, nodeType, nodeData?.id, edges, nodes, nodeExecutionCache]);
+
+  // Handler to manually load columns from connected database nodes
+  const handleLoadColumns = async () => {
+    if (!edges || !nodes) return;
+
+    const incomingEdges = edges.filter((edge: any) => edge.target === nodeData?.id);
+    if (incomingEdges.length === 0) return;
+
+    // Find database nodes
+    const databaseNodes = incomingEdges
+      .map((edge: any) => nodes?.find((n: any) => n.id === edge.source))
+      .filter((node: any) => node?.type === 'database');
+
+    if (databaseNodes.length === 0) return;
+
+    setColumnLoadingState({
+      isLoading: true,
+      executingNodes: new Set(databaseNodes.map(n => n.id)),
+      errors: {}
+    });
+
+    const newLoadedColumns: Record<string, any> = {};
+    const errors: Record<string, string> = {};
+
+    for (const node of databaseNodes) {
+      const config = node.data?.config;
+
+      if (!config?.credential_id || !config?.query) {
+        console.log(`[NodeConfigModal] Skipping ${node.data?.label}: missing config`);
+        errors[node.id] = 'Missing credential or query configuration';
+        continue;
+      }
+
+      try {
+        const result = await api.testDatabaseQuery(
+          parseInt(config.credential_id),
+          config.query
+        );
+
+        console.log(`[NodeConfigModal] Loaded columns from ${node.data?.label}:`, result.columns);
+
+        newLoadedColumns[node.id] = {
+          columns: result.columns,
+          data: result.data,
+          sourceLabel: node.data?.label || node.id
+        };
+
+      } catch (error: any) {
+        const errorMsg = error.response?.data?.error || error.message || 'Failed to load columns';
+        errors[node.id] = errorMsg;
+        console.error(`[NodeConfigModal] Failed to load columns from ${node.data?.label}:`, error);
+      }
+    }
+
+    setLoadedColumns(newLoadedColumns);
+    setColumnLoadingState({
+      isLoading: false,
+      executingNodes: new Set(),
+      errors
+    });
+  };
 
   const handleFieldChange = (fieldName: string, value: any) => {
     setConfig((prev: any) => ({
@@ -186,6 +313,100 @@ export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave }:
       }
       return newSet;
     });
+  };
+
+  // Get grouped column options from all incoming database nodes
+  const getGroupedColumnOptions = () => {
+    if (!edges || !nodeData?.id) {
+      console.log('[getGroupedColumnOptions] Missing edges or nodeData.id:', { edges, nodeDataId: nodeData?.id });
+      return { hasConnections: false, groups: [] };
+    }
+
+    console.log('[getGroupedColumnOptions] Debug info:', {
+      nodeDataId: nodeData.id,
+      totalEdges: edges.length,
+      edges: edges,
+      nodeData: nodeData
+    });
+
+    const incomingEdges = edges.filter((edge: any) => edge.target === nodeData.id);
+
+    console.log('[getGroupedColumnOptions] Found incoming edges:', {
+      count: incomingEdges.length,
+      incomingEdges
+    });
+
+    if (incomingEdges.length === 0) {
+      return { hasConnections: false, groups: [] };
+    }
+
+    const groups: Array<{
+      sourceId: string;
+      sourceLabel: string;
+      columns: Array<{ value: string; label: string }>;
+      hasResults: boolean;
+      error?: string;
+    }> = [];
+
+    incomingEdges.forEach((edge: any) => {
+      const sourceNodeId = edge.source;
+      const sourceNode = nodes?.find((n: any) => n.id === sourceNodeId);
+      const sourceLabel = sourceNode?.data?.label || sourceNode?.data?.config?.label || 'Unknown Source';
+
+      // Check manually loaded columns first, then execution cache
+      const loadedData = loadedColumns[sourceNodeId];
+      const executionResults = nodeExecutionCache?.[sourceNodeId];
+      const executionError = columnLoadingState.errors[sourceNodeId];
+
+      if (executionError) {
+        groups.push({
+          sourceId: sourceNodeId,
+          sourceLabel,
+          columns: [],
+          hasResults: false,
+          error: executionError
+        });
+      } else if (loadedData && loadedData.columns.length > 0) {
+        // Use manually loaded columns
+        groups.push({
+          sourceId: sourceNodeId,
+          sourceLabel: loadedData.sourceLabel,
+          columns: loadedData.columns.map(col => ({
+            value: `${sourceNodeId}.${col}`,
+            label: col
+          })),
+          hasResults: true
+        });
+      } else if (executionResults && executionResults.length > 0) {
+        // Use execution cache columns
+        const columnNames = Object.keys(executionResults[0]);
+        groups.push({
+          sourceId: sourceNodeId,
+          sourceLabel,
+          columns: columnNames.map(col => ({
+            value: `${sourceNodeId}.${col}`,
+            label: col
+          })),
+          hasResults: true
+        });
+      } else if (columnLoadingState.executingNodes.has(sourceNodeId)) {
+        groups.push({
+          sourceId: sourceNodeId,
+          sourceLabel,
+          columns: [],
+          hasResults: false
+        });
+      } else {
+        groups.push({
+          sourceId: sourceNodeId,
+          sourceLabel,
+          columns: [],
+          hasResults: false
+        });
+      }
+    });
+
+    return { hasConnections: true, groups };
   };
 
   const shouldShowField = (field: any) => {
@@ -520,6 +741,187 @@ export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave }:
             )}
             {field.help && (
               <p className="text-gray-400 text-xs mt-1">{field.help}</p>
+            )}
+          </div>
+        );
+
+      case 'input_mapping':
+        const selectedAgentId = config.agent_id;
+        const selectedAgent = agents?.results?.find((a: any) => a.id === Number(selectedAgentId));
+        const inputPlaceholders = selectedAgent?.input_placeholders || [];
+
+        // Get grouped columns from execution results
+        const { hasConnections, groups } = getGroupedColumnOptions();
+        const isLoadingColumns = columnLoadingState.isLoading;
+
+        return (
+          <div key={field.name} className="mb-4">
+            <label className="block text-sm font-medium text-white mb-2">
+              {field.label}
+              {field.required && <span className="text-red-400 ml-1">*</span>}
+            </label>
+
+            {!selectedAgentId ? (
+              <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3 text-yellow-400 text-sm flex items-start gap-2">
+                <span className="material-symbols-outlined text-sm mt-0.5">info</span>
+                <span>Please select an agent first to configure input mapping</span>
+              </div>
+            ) : inputPlaceholders.length === 0 ? (
+              <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 text-blue-400 text-sm flex items-start gap-2">
+                <span className="material-symbols-outlined text-sm mt-0.5">info</span>
+                <span>This agent doesn't have any input placeholders defined in its prompts</span>
+              </div>
+            ) : !hasConnections ? (
+              <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-3 text-orange-400 text-sm flex items-start gap-2">
+                <span className="material-symbols-outlined text-sm mt-0.5">warning</span>
+                <span>No database nodes connected to this agent. Connect a database node first.</span>
+              </div>
+            ) : isLoadingColumns ? (
+              <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3">
+                <div className="flex items-center gap-3 text-blue-400 text-sm mb-2">
+                  <span className="material-symbols-outlined text-sm animate-spin">progress_activity</span>
+                  <span>Executing connected database nodes to fetch columns...</span>
+                </div>
+                {Array.from(columnLoadingState.executingNodes).map(nodeId => {
+                  const node = nodes?.find(n => n.id === nodeId);
+                  return (
+                    <div key={nodeId} className="ml-7 text-xs text-gray-400">
+                      • {node?.data?.label || nodeId}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div>
+                {/* Load Columns Button */}
+                {groups.every(g => !g.hasResults) && Object.keys(loadedColumns).length === 0 && (
+                  <div className="mb-4 bg-blue-500/10 border border-blue-500/20 rounded-lg p-4">
+                    <p className="text-sm text-blue-400 mb-3 flex items-center gap-2">
+                      <span className="material-symbols-outlined text-sm">info</span>
+                      <span>Click below to load columns from connected database nodes</span>
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleLoadColumns}
+                      className="w-full bg-[#1173d4] hover:bg-[#0d5aa7] text-white px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                    >
+                      <span className="material-symbols-outlined text-sm">cloud_download</span>
+                      Load Columns from Database Nodes
+                    </button>
+                  </div>
+                )}
+
+                <p className="text-xs text-gray-400 mb-3">
+                  Map input data fields to agent placeholders:
+                </p>
+
+                {/* Mapping Table */}
+                <div className="border border-[#374151] rounded-lg overflow-hidden">
+                  <table className="w-full">
+                    <thead className="bg-[#1a2633]">
+                      <tr>
+                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                          Placeholder
+                        </th>
+                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                          Map to Field
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-[#111a22] divide-y divide-[#374151]">
+                      {inputPlaceholders.map((placeholder: string) => (
+                        <tr key={placeholder} className="hover:bg-[#1a2633] transition-colors">
+                          <td className="px-4 py-3">
+                            <span className="text-sm text-white font-medium">
+                              {placeholder}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <select
+                              value={fieldValue?.[placeholder] || ''}
+                              onChange={(e) => {
+                                const newMapping = { ...(fieldValue || {}), [placeholder]: e.target.value };
+                                handleFieldChange(field.name, newMapping);
+                              }}
+                              className="w-full bg-[#0a1219] border border-[#374151] rounded-md px-3 py-2 text-white text-sm focus:border-[#1173d4] focus:outline-none"
+                            >
+                              <option value="">-- Select field --</option>
+
+                              {/* Grouped options by source node */}
+                              {groups.map(group => {
+                                if (group.error) {
+                                  return (
+                                    <optgroup key={group.sourceId} label={`${group.sourceLabel} (Error)`}>
+                                      <option disabled value="">
+                                        ⚠️ {group.error}
+                                      </option>
+                                    </optgroup>
+                                  );
+                                }
+
+                                if (!group.hasResults) {
+                                  return (
+                                    <optgroup key={group.sourceId} label={`${group.sourceLabel} (No data)`}>
+                                      <option disabled value="">
+                                        Execute this node to see columns
+                                      </option>
+                                    </optgroup>
+                                  );
+                                }
+
+                                return (
+                                  <optgroup key={group.sourceId} label={group.sourceLabel}>
+                                    {group.columns.map(col => (
+                                      <option key={col.value} value={col.value}>
+                                        {col.label}
+                                      </option>
+                                    ))}
+                                  </optgroup>
+                                );
+                              })}
+                            </select>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Error Summary */}
+                {Object.keys(columnLoadingState.errors).length > 0 && (
+                  <div className="mt-3 bg-red-500/10 border border-red-500/20 rounded-lg p-3">
+                    <p className="text-xs text-red-400 font-medium mb-2">
+                      <span className="material-symbols-outlined text-xs mr-1">error</span>
+                      Execution Errors:
+                    </p>
+                    <ul className="text-xs text-red-400 space-y-1 ml-5">
+                      {Object.entries(columnLoadingState.errors).map(([nodeId, error]) => {
+                        const node = nodes?.find(n => n.id === nodeId);
+                        return (
+                          <li key={nodeId}>
+                            • {node?.data?.label || nodeId}: {error}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Help text */}
+                <div className="mt-3 bg-[#0a1219] border border-[#374151] rounded-lg p-3">
+                  <p className="text-xs text-gray-400 flex items-center gap-1">
+                    <span className="material-symbols-outlined text-xs">info</span>
+                    Columns are automatically fetched from connected database nodes
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {field.help && (
+              <p className="text-gray-400 text-xs mt-2">{field.help}</p>
+            )}
+            {fieldError && (
+              <p className="text-red-400 text-xs mt-1">{fieldError}</p>
             )}
           </div>
         );

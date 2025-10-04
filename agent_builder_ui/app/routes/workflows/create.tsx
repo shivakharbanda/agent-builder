@@ -72,6 +72,9 @@ export default function CreateWorkflow() {
     showModal: false,
   });
 
+  // Node execution results cache (for input mapping)
+  const [nodeExecutionCache, setNodeExecutionCache] = useState<Record<string, any>>({});
+
   // Form submission hook - use different API based on mode
   const { loading: saving, error: saveError, submit: submitWorkflow } = useFormSubmit(
     async (data: any) => {
@@ -298,6 +301,12 @@ export default function CreateWorkflow() {
     try {
       const result = await api.executeWorkflow(Number(workflowId), Number(dbNodeId));
 
+      // Cache the results by frontend node ID (for input mapping dropdown)
+      setNodeExecutionCache(prev => ({
+        ...prev,
+        [nodeId]: result.results
+      }));
+
       // Show results in modal
       setExecutionState({
         isExecuting: false,
@@ -425,6 +434,7 @@ export default function CreateWorkflow() {
                 initialConfig={workflowConfig}
                 isLoading={isLoadingWorkflow}
                 onExecuteNode={handleExecuteNode}
+                nodeExecutionCache={nodeExecutionCache}
               />
             </WorkflowErrorBoundary>
           </main>

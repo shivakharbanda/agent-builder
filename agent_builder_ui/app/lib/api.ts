@@ -608,6 +608,22 @@ class AgentBuilderAPI {
     );
     return response.data;
   }
+
+  // Test database query to get column names and sample data
+  async testDatabaseQuery(credentialId: number, query: string): Promise<{
+    columns: string[];
+    data: Record<string, any>[];
+    row_count: number;
+  }> {
+    const response = await this.client.post(
+      '/builder-tools/test_query/',
+      {
+        credential_id: credentialId,
+        query: query
+      }
+    );
+    return response.data;
+  }
 }
 
 // Create and export a singleton instance

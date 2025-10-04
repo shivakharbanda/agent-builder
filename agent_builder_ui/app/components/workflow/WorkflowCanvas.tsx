@@ -24,6 +24,7 @@ interface WorkflowCanvasProps {
   initialConfig?: WorkflowConfig;
   isLoading?: boolean;
   onExecuteNode?: (nodeId: string) => void;
+  nodeExecutionCache?: Record<string, any>;
 }
 
 // Custom node components
@@ -408,7 +409,7 @@ const nodeTypes = {
   conditional: ConditionalNode,
 };
 
-export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExecuteNode }: WorkflowCanvasProps) {
+export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExecuteNode, nodeExecutionCache }: WorkflowCanvasProps) {
   // React Flow manages node/edge arrays internally
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -419,11 +420,17 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExe
     nodeId: string | null;
     nodeType: string | null;
     nodeData: any | null;
+    edges: any[];
+    nodes: any[];
+    executionCache: Record<string, any>;
   }>({
     isOpen: false,
     nodeId: null,
     nodeType: null,
     nodeData: null,
+    edges: [],
+    nodes: [],
+    executionCache: {},
   });
 
   const [workflowConfig, setWorkflowConfig] = useState<WorkflowConfig>({
@@ -562,8 +569,11 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExe
       nodeId,
       nodeType,
       nodeData,
+      edges: edges,
+      nodes: nodes,
+      executionCache: nodeExecutionCache || {},
     });
-  }, []);
+  }, [edges, nodes, nodeExecutionCache]);
 
   const handleNodeDelete = useCallback((nodeId: string) => {
     setNodes((nodes) => nodes.filter((node) => node.id !== nodeId));
@@ -578,8 +588,11 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExe
       nodeId,
       nodeType,
       nodeData,
+      edges: edges,
+      nodes: nodes,
+      executionCache: nodeExecutionCache || {},
     });
-  }, []);
+  }, [edges, nodes, nodeExecutionCache]);
 
   const closeNodeConfig = useCallback(() => {
     setConfigModal({
@@ -587,6 +600,9 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExe
       nodeId: null,
       nodeType: null,
       nodeData: null,
+      edges: [],
+      nodes: [],
+      executionCache: {},
     });
   }, []);
 
@@ -725,6 +741,7 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExe
       case 'agent':
         return {
           agentId: null,
+          llm_credential_id: null,
           prompts: [],
           tools: []
         };
@@ -855,6 +872,10 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExe
         nodeType={configModal.nodeType || ''}
         nodeData={configModal.nodeData}
         onSave={saveNodeConfig}
+        edges={configModal.edges}
+        nodes={configModal.nodes}
+        nodeExecutionCache={configModal.executionCache}
+        onExecuteNode={onExecuteNode}
       />
 
       {/* Workflow Properties Modal */}

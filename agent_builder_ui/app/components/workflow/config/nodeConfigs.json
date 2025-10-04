@@ -55,6 +55,15 @@
         "help": "Choose which AI agent will process the input data"
       },
       {
+        "name": "llm_credential_id",
+        "type": "credential_select",
+        "label": "LLM Connection",
+        "placeholder": "Select an LLM credential",
+        "required": true,
+        "category_filter": "LLM",
+        "help": "Choose the LLM provider (OpenAI, Gemini, etc.) for agent execution"
+      },
+      {
         "name": "input_mapping",
         "type": "input_mapping",
         "label": "Input Data Mapping",
