@@ -19,7 +19,9 @@ import type {
   LoginRequest,
   LoginResponse,
   User,
-  AuthCheckResponse
+  AuthCheckResponse,
+  AgentTestRequest,
+  AgentTestResponse
 } from './types';
 
 // Network connectivity state
@@ -262,6 +264,11 @@ class AgentBuilderAPI {
 
   async getAgentTools(id: number): Promise<AgentTool[]> {
     const response = await this.client.get<AgentTool[]>(`/agents/${id}/tools/`);
+    return response.data;
+  }
+
+  async testAgent(id: number, data: AgentTestRequest): Promise<AgentTestResponse> {
+    const response = await this.client.post<AgentTestResponse>(`/agents/${id}/test/`, data);
     return response.data;
   }
 

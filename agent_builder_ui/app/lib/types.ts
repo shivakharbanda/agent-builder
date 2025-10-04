@@ -372,3 +372,37 @@ export interface CredentialUpdate {
   description: string;
   credential_details?: Record<string, string>;
 }
+
+// Agent Testing types
+export type AgentTestType = 'structured' | 'unstructured';
+
+export interface ConversationMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface AgentTestRequest {
+  test_type: AgentTestType;
+  credential_id: number;
+  model?: string;  // Optional model name (e.g., 'gemini-1.5-flash', 'gpt-4o')
+  inputs?: Record<string, any>;  // For structured tests
+  message?: string;  // For unstructured tests
+  conversation_history?: ConversationMessage[];  // For unstructured tests
+}
+
+export interface AgentTestResponse {
+  success: boolean;
+  execution_time_ms: number;
+  error?: string;
+  output?: Record<string, any>;  // For structured tests
+  response?: string;  // For unstructured tests
+  conversation_history?: ConversationMessage[];  // For unstructured tests
+}
+
+export interface AgentTestInfo {
+  agent_id: number;
+  agent_name: string;
+  return_type: ReturnType;
+  placeholders: string[];
+  schema_definition?: Record<string, any>;
+}

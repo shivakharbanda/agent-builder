@@ -6,7 +6,8 @@ from django_filters.rest_framework import DjangoFilterBackend
 from .models import Agent, Prompt, Tool, AgentTool
 from .serializers import (
     AgentSerializer, AgentListSerializer, PromptSerializer,
-    ToolSerializer, AgentToolSerializer, AgentCompleteCreateSerializer
+    ToolSerializer, AgentToolSerializer, AgentCompleteCreateSerializer,
+    AgentTestRequestSerializer, AgentTestResponseSerializer
 )
 
 
@@ -81,3 +82,82 @@ class CreateAgentCompleteView(APIView):
         # Return the full agent data using the standard serializer
         response_serializer = AgentSerializer(agent, context={'request': request})
         return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+
+
+class TestAgentView(APIView):
+    """
+    Test an agent with provided inputs.
+
+    Supports both structured and unstructured agent testing.
+    """
+
+    def post(self, request, pk):
+        """
+        Execute agent test.
+
+        Args:
+            pk: Agent ID
+            request.data: Test request containing test_type and inputs
+
+        Returns:
+            Test results with agent output
+        """
+        from .services import AgentExecutor, ConversationManager
+
+        # Validate request
+        request_serializer = AgentTestRequestSerializer(data=request.data)
+        request_serializer.is_valid(raise_exception=True)
+
+        test_data = request_serializer.validated_data
+        test_type = test_data['test_type']
+        credential_id = test_data['credential_id']
+        model = test_data.get('model', None)
+
+        try:
+            # Initialize executor
+            executor = AgentExecutor(agent_id=pk)
+
+            # Execute based on test type
+            if test_type == 'structured':
+                inputs = test_data.get('inputs', {})
+                result = executor.execute_structured(
+                    placeholder_values=inputs,
+                    credential_id=credential_id,
+                    model=model
+                )
+
+            else:  # unstructured
+                message = test_data.get('message')
+                conversation_history = test_data.get('conversation_history', [])
+
+                # Validate conversation history
+                conversation_history = ConversationManager.validate_history(conversation_history)
+
+                result = executor.execute_unstructured(
+                    message=message,
+                    credential_id=credential_id,
+                    conversation_history=conversation_history,
+                    model=model
+                )
+
+            # Serialize response
+            response_serializer = AgentTestResponseSerializer(data=result)
+            response_serializer.is_valid(raise_exception=True)
+
+            return Response(response_serializer.data, status=status.HTTP_200_OK)
+
+        except Agent.DoesNotExist:
+            return Response(
+                {'error': f'Agent with ID {pk} not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {
+                    'success': False,
+                    'error': str(e),
+                    'execution_time_ms': 0
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+

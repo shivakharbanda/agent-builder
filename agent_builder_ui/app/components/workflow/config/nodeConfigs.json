@@ -64,6 +64,14 @@
         "help": "Choose the LLM provider (OpenAI, Gemini, etc.) for agent execution"
       },
       {
+        "name": "model",
+        "type": "text",
+        "label": "Model Name",
+        "placeholder": "e.g., gemini-1.5-flash, gpt-4o",
+        "required": false,
+        "help": "Specific model to use (optional, defaults to credential's model)"
+      },
+      {
         "name": "input_mapping",
         "type": "input_mapping",
         "label": "Input Data Mapping",

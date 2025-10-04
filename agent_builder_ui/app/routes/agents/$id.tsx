@@ -9,6 +9,7 @@ import { LoadingState } from '../../components/ui/Loading';
 import { useAgent, useAgentPrompts, useAgentTools } from '../../hooks/useAPI';
 import { api } from '../../lib/api';
 import { formatRelativeTime } from '../../lib/utils';
+import { TestAgentModal } from '../../components/agent-test/TestAgentModal';
 
 export function meta({ params }: Route.MetaArgs) {
   return [
@@ -28,6 +29,7 @@ export default function AgentDetail() {
 
   const [deleting, setDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showTestModal, setShowTestModal] = useState(false);
 
   const handleDelete = async () => {
     try {
@@ -103,6 +105,13 @@ export default function AgentDetail() {
             </div>
 
             <div className="flex gap-3">
+              <Button
+                variant="outline"
+                onClick={() => setShowTestModal(true)}
+                leftIcon={<span className="material-symbols-outlined text-base">science</span>}
+              >
+                Test
+              </Button>
               <Button
                 variant="outline"
                 onClick={() => navigate(`/agents/${agentId}/edit`)}
@@ -211,6 +220,15 @@ export default function AgentDetail() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Test Agent Modal */}
+        {showTestModal && (
+          <TestAgentModal
+            agent={agent}
+            prompts={prompts || []}
+            onClose={() => setShowTestModal(false)}
+          />
+        )}
 
         {/* Delete Confirmation Modal */}
         {showDeleteConfirm && (

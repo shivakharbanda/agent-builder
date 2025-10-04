@@ -171,3 +171,69 @@ class AgentCompleteCreateSerializer(serializers.ModelSerializer):
             )
 
         return agent
+
+
+class AgentTestRequestSerializer(serializers.Serializer):
+    """Serializer for agent test requests"""
+    test_type = serializers.ChoiceField(choices=['structured', 'unstructured'], required=True)
+    credential_id = serializers.IntegerField(required=True, help_text="ID of LLM credential to use")
+    model = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="Model name to use (e.g., 'gemini-1.5-flash', 'gpt-4o'). If not provided, uses default from credential."
+    )
+
+    # For structured tests
+    inputs = serializers.JSONField(
+        required=False,
+        help_text="Placeholder values for structured agent testing"
+    )
+
+    # For unstructured tests
+    message = serializers.CharField(
+        required=False,
+        allow_blank=False,
+        help_text="User message for unstructured agent testing"
+    )
+    conversation_history = serializers.ListField(
+        child=serializers.DictField(),
+        required=False,
+        default=list,
+        help_text="Conversation history for unstructured agent"
+    )
+
+    def validate(self, data):
+        """Validate that required fields are present based on test_type"""
+        test_type = data.get('test_type')
+
+        if test_type == 'structured':
+            if 'inputs' not in data:
+                raise serializers.ValidationError({
+                    'inputs': 'Required for structured agent testing'
+                })
+
+        elif test_type == 'unstructured':
+            if 'message' not in data:
+                raise serializers.ValidationError({
+                    'message': 'Required for unstructured agent testing'
+                })
+
+        return data
+
+
+class AgentTestResponseSerializer(serializers.Serializer):
+    """Serializer for agent test responses"""
+    success = serializers.BooleanField()
+    execution_time_ms = serializers.IntegerField()
+    error = serializers.CharField(required=False, allow_null=True)
+
+    # For structured responses
+    output = serializers.JSONField(required=False, allow_null=True)
+
+    # For unstructured responses
+    response = serializers.CharField(required=False, allow_null=True)
+    conversation_history = serializers.ListField(
+        child=serializers.DictField(),
+        required=False,
+        default=list
+    )

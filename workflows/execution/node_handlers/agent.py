@@ -7,6 +7,8 @@ Processes data using configured AI agents.
 
 from typing import Any
 from .base import BaseNode
+from agents.services.agent_executor import AgentExecutor
+from agents.models import Agent
 
 
 class AgentNode(BaseNode):
@@ -37,7 +39,7 @@ class AgentNode(BaseNode):
 
         # Define dependencies
         self.required_dependencies = ['agent_id', 'llm_credential_id']
-        self.optional_dependencies = ['batch_size', 'timeout', 'input_mapping']
+        self.optional_dependencies = ['batch_size', 'timeout', 'input_mapping', 'model']
 
     def validate(self) -> bool:
         """
@@ -186,26 +188,92 @@ class AgentNode(BaseNode):
         for i in range(0, len(mapped_data), batch_size):
             batches.append(mapped_data[i:i + batch_size])
 
+        # Get agent configuration
+        agent_id = config.get('agent_id')
+        llm_credential_id = config.get('llm_credential_id')
+        model = config.get('model')  # Optional - can be None/empty
+
+        # Load agent from database
+        try:
+            agent = Agent.objects.get(id=agent_id, is_active=True)
+        except Agent.DoesNotExist:
+            raise ValueError(f"Agent with ID {agent_id} not found or inactive")
+
+        # Create AgentExecutor
+        executor = AgentExecutor(agent_id=agent_id)
+
         # Process batches
         all_results = []
         for batch_idx, batch in enumerate(batches):
-            # Mock agent execution for each record in batch
-            # TODO: Replace with actual agent API call
             batch_results = []
+
             for item in batch:
-                # Simulate processing
-                mock_result = {
-                    **item['original_record'],  # Preserve original columns
-                    'agent_result': f'Mock classification result',  # Mock agent output
-                    'agent_confidence': 0.95,  # Mock confidence score
-                    'agent_processed_at': datetime.now().isoformat(),
-                    'agent_input_used': item['agent_input']  # Show what was sent to agent
-                }
-                batch_results.append(mock_result)
+                placeholder_values = item['agent_input']
+
+                # Execute agent based on return type
+                if agent.return_type == 'structured':
+                    # Structured agent - returns JSON
+                    result = executor.execute_structured(
+                        placeholder_values=placeholder_values,
+                        credential_id=int(llm_credential_id),
+                        model=model if model else None
+                    )
+
+                    if result['success']:
+                        # Merge agent output with original record
+                        processed_record = {
+                            **item['original_record'],  # Original columns
+                            **result['output'],  # Agent output fields (spreads JSON into record)
+                            '_agent_metadata': {
+                                'execution_time_ms': result['execution_time_ms'],
+                                'success': True,
+                                'agent_type': 'structured'
+                            }
+                        }
+                    else:
+                        # Execution failed - preserve record with error
+                        processed_record = {
+                            **item['original_record'],
+                            '_agent_metadata': {
+                                'execution_time_ms': result['execution_time_ms'],
+                                'success': False,
+                                'error': result['error'],
+                                'agent_type': 'structured'
+                            }
+                        }
+
+                else:
+                    # Unstructured agent - returns text response
+                    result = executor.execute_unstructured(
+                        message=str(placeholder_values),  # Convert dict to string
+                        credential_id=int(llm_credential_id),
+                        conversation_history=None,  # No conversation context in workflows
+                        model=model if model else None
+                    )
+
+                    if result['success']:
+                        processed_record = {
+                            **item['original_record'],
+                            'agent_response': result['response'],  # Text response
+                            '_agent_metadata': {
+                                'execution_time_ms': result['execution_time_ms'],
+                                'success': True,
+                                'agent_type': 'unstructured'
+                            }
+                        }
+                    else:
+                        processed_record = {
+                            **item['original_record'],
+                            '_agent_metadata': {
+                                'execution_time_ms': result['execution_time_ms'],
+                                'success': False,
+                                'error': result['error'],
+                                'agent_type': 'unstructured'
+                            }
+                        }
+
+                batch_results.append(processed_record)
 
             all_results.extend(batch_results)
-
-            # Simulate batch processing delay (remove in production)
-            time.sleep(0.1)
 
         return all_results
