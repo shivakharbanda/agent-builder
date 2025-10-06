@@ -634,6 +634,29 @@ from workflows.execution.node_handlers.database_executor import DatabaseExecutor
 from rest_framework.permissions import IsAuthenticated
 
 
+def normalize_metadata_field_names(metadata_dict: dict) -> dict:
+    """
+    Normalize field names from dq_db_manager to match Pydantic models.
+
+    PostgreSQL's pg_indexes returns 'indexname' and 'indexdef',
+    but IndexDetail model expects 'index_name' and 'index_definition'.
+
+    This transformation ensures compatibility without modifying the dq_db_manager package.
+    """
+    if 'tables' in metadata_dict:
+        for table in metadata_dict['tables']:
+            if 'indexes' in table:
+                normalized_indexes = []
+                for index in table['indexes']:
+                    normalized_index = {
+                        'index_name': index.get('indexname', index.get('index_name')),
+                        'index_definition': index.get('indexdef', index.get('index_definition'))
+                    }
+                    normalized_indexes.append(normalized_index)
+                table['indexes'] = normalized_indexes
+    return metadata_dict
+
+
 class WorkflowBuilderToolsViewSet(viewsets.ViewSet):
     """
     API endpoints for AI workflow builder tools.
@@ -907,6 +930,9 @@ class WorkflowBuilderToolsViewSet(viewsets.ViewSet):
 
             # Get complete metadata from dq_db_manager as dict
             metadata_dict = handler.metadata_extractor.get_complete_metadata()
+
+            # Normalize field names to match Pydantic models
+            metadata_dict = normalize_metadata_field_names(metadata_dict)
 
             # Validate with DataSourceMetadata model
             metadata = DataSourceMetadata(**metadata_dict)

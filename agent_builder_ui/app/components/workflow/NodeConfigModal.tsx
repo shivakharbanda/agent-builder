@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import { Button } from '../ui/Button';
-import { Input } from '../ui/Input';
+import { Input, Textarea, Select } from '../ui/Input';
 import nodeConfigs from './config/nodeConfigs.json';
 import { useCredentials, useAgents } from '../../hooks/useAPI';
 import { APP_CONFIG } from '../../lib/config';
 import { api } from '../../lib/api';
+import type { AgentCompleteCreate, Agent } from '../../lib/types';
 
 interface NodeConfigModalProps {
   isOpen: boolean;
@@ -28,6 +29,516 @@ interface NodeConfig {
   outputs?: any[];
 }
 
+// ============================================================================
+// SUB-COMPONENTS - Defined outside to prevent re-mounting on state changes
+// ============================================================================
+
+// Tab Navigation Component
+type AgentTab = 'config' | 'details';
+
+function TabNavigation({
+  activeTab,
+  onTabChange
+}: {
+  activeTab: AgentTab;
+  onTabChange: (tab: AgentTab) => void;
+}) {
+  return (
+    <div className="flex border-b border-[#374151]">
+      <button
+        onClick={() => onTabChange('config')}
+        className={`px-6 py-3 text-sm font-medium transition-colors border-b-2 ${
+          activeTab === 'config'
+            ? 'border-[#1173d4] text-white'
+            : 'border-transparent text-gray-400 hover:text-white'
+        }`}
+      >
+        <span className="material-symbols-outlined text-sm mr-2 align-middle">settings</span>
+        Configuration
+      </button>
+
+      <button
+        onClick={() => onTabChange('details')}
+        className={`px-6 py-3 text-sm font-medium transition-colors border-b-2 ${
+          activeTab === 'details'
+            ? 'border-[#1173d4] text-white'
+            : 'border-transparent text-gray-400 hover:text-white'
+        }`}
+      >
+        <span className="material-symbols-outlined text-sm mr-2 align-middle">description</span>
+        Agent Details
+      </button>
+    </div>
+  );
+}
+
+// Agent Details Read-Only Component
+function AgentDetailsReadOnly({ agent, onEdit }: { agent: Agent; onEdit?: () => void }) {
+  const systemPrompt = agent.prompts?.find(p => p.prompt_type === 'system');
+  const userPrompt = agent.prompts?.find(p => p.prompt_type === 'user');
+
+  // Extract unique placeholders from both prompts
+  const extractPlaceholders = () => {
+    const placeholders = new Set<string>();
+
+    if (systemPrompt?.placeholders) {
+      Object.keys(systemPrompt.placeholders).forEach(key => placeholders.add(key));
+    }
+    if (userPrompt?.placeholders) {
+      Object.keys(userPrompt.placeholders).forEach(key => placeholders.add(key));
+    }
+
+    return Array.from(placeholders);
+  };
+
+  const inputPlaceholders = extractPlaceholders();
+
+  return (
+    <div className="space-y-6">
+      {/* Header with Edit Button */}
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-semibold text-white">{agent.name}</h3>
+        <div className="flex items-center gap-3">
+          <span className="px-3 py-1 bg-gray-500/20 text-gray-400 text-xs rounded-full">
+            READ-ONLY
+          </span>
+          {onEdit && (
+            <Button onClick={onEdit} variant="outline" className="text-sm">
+              <span className="material-symbols-outlined text-sm mr-1">edit</span>
+              Edit Agent
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* Basic Info Card */}
+      <div className="bg-[#0a1219] border border-[#374151] rounded-lg p-4 space-y-3">
+        <div className="flex items-center gap-2 text-sm text-gray-400 mb-3">
+          <span className="material-symbols-outlined text-sm">info</span>
+          <span>Basic Information</span>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <div className="text-xs text-gray-500">Name</div>
+            <div className="text-sm text-white mt-1">{agent.name}</div>
+          </div>
+          <div>
+            <div className="text-xs text-gray-500">Return Type</div>
+            <div className="mt-1">
+              <span className={`text-xs px-2 py-1 rounded ${
+                agent.return_type === 'structured'
+                  ? 'bg-blue-500/20 text-blue-400'
+                  : 'bg-green-500/20 text-green-400'
+              }`}>
+                {agent.return_type}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div className="text-xs text-gray-500">Description</div>
+          <div className="text-sm text-white mt-1">{agent.description}</div>
+        </div>
+      </div>
+
+      {/* System Prompt Card */}
+      <div className="bg-[#0a1219] border border-[#374151] rounded-lg p-4">
+        <div className="flex items-center gap-2 text-sm text-gray-400 mb-3">
+          <span className="material-symbols-outlined text-sm">chat</span>
+          <span>System Prompt</span>
+        </div>
+        <pre className="text-xs text-gray-300 bg-[#111a22] p-3 rounded overflow-x-auto whitespace-pre-wrap">
+          {systemPrompt?.content}
+        </pre>
+      </div>
+
+      {/* User Prompt Card */}
+      <div className="bg-[#0a1219] border border-[#374151] rounded-lg p-4">
+        <div className="flex items-center gap-2 text-sm text-gray-400 mb-3">
+          <span className="material-symbols-outlined text-sm">person</span>
+          <span>User Prompt Template</span>
+        </div>
+        <pre className="text-xs text-gray-300 bg-[#111a22] p-3 rounded overflow-x-auto whitespace-pre-wrap">
+          {userPrompt?.content}
+        </pre>
+      </div>
+
+      {/* Placeholders Card */}
+      {inputPlaceholders.length > 0 && (
+        <div className="bg-[#0a1219] border border-[#374151] rounded-lg p-4">
+          <div className="flex items-center gap-2 text-sm text-gray-400 mb-3">
+            <span className="material-symbols-outlined text-sm">label</span>
+            <span>Input Placeholders</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {inputPlaceholders.map((ph: string) => (
+              <span
+                key={ph}
+                className="px-3 py-1 bg-[#1173d4]/20 text-[#1173d4] text-sm rounded-full"
+              >
+                {ph}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Schema Card (if structured) */}
+      {agent.return_type === 'structured' && agent.schema_definition && (
+        <div className="bg-[#0a1219] border border-[#374151] rounded-lg p-4">
+          <div className="flex items-center gap-2 text-sm text-gray-400 mb-3">
+            <span className="material-symbols-outlined text-sm">code</span>
+            <span>Output Schema</span>
+          </div>
+          <pre className="text-xs text-gray-300 bg-[#111a22] p-3 rounded overflow-x-auto">
+            {JSON.stringify(agent.schema_definition, null, 2)}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Agent Details Create Component
+function AgentDetailsCreate({
+  config,
+  onChange,
+  onCreateAgent,
+  loading
+}: {
+  config: {
+    name: string;
+    description: string;
+    return_type: 'structured' | 'unstructured';
+    system_prompt: string;
+    user_prompt: string;
+    schema_definition: string;
+  };
+  onChange: (config: any) => void;
+  onCreateAgent: () => void;
+  loading: boolean;
+}) {
+  const [detectedPlaceholders, setDetectedPlaceholders] = useState<string[]>([]);
+
+  // Auto-detect placeholders from prompts
+  useEffect(() => {
+    const placeholders = new Set<string>();
+    const regex = /\{\{(\w+)\}\}/g;
+    const combinedText = `${config.system_prompt} ${config.user_prompt}`;
+    let match;
+
+    while ((match = regex.exec(combinedText)) !== null) {
+      placeholders.add(match[1]);
+    }
+
+    setDetectedPlaceholders(Array.from(placeholders));
+  }, [config.system_prompt, config.user_prompt]);
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-semibold text-white">Create New Agent</h3>
+      </div>
+
+      {/* Agent Name */}
+      <Input
+        label="Agent Name"
+        value={config.name}
+        onChange={(e) => onChange({ ...config, name: e.target.value })}
+        placeholder="e.g., Custom Sentiment Analyzer"
+        required
+      />
+
+      {/* Description */}
+      <Textarea
+        label="Description"
+        value={config.description}
+        onChange={(e) => onChange({ ...config, description: e.target.value })}
+        placeholder="What does this agent do?"
+        className="min-h-[60px]"
+      />
+
+      {/* Return Type - Radio Buttons */}
+      <div>
+        <label className="block text-sm font-medium text-white mb-3">
+          Return Type
+          <span className="text-red-400 ml-1">*</span>
+        </label>
+        <div className="flex gap-4">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              value="structured"
+              checked={config.return_type === 'structured'}
+              onChange={(e) => onChange({ ...config, return_type: e.target.value as any })}
+              className="w-4 h-4 text-[#1173d4]"
+            />
+            <span className="text-sm text-white">Structured (JSON)</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              value="unstructured"
+              checked={config.return_type === 'unstructured'}
+              onChange={(e) => onChange({ ...config, return_type: e.target.value as any })}
+              className="w-4 h-4 text-[#1173d4]"
+            />
+            <span className="text-sm text-white">Unstructured (Text)</span>
+          </label>
+        </div>
+      </div>
+
+      {/* System Prompt */}
+      <Textarea
+        label="System Prompt"
+        value={config.system_prompt}
+        onChange={(e) => onChange({ ...config, system_prompt: e.target.value })}
+        placeholder="You are an expert at analyzing sentiment..."
+        className="min-h-[120px]"
+        required
+        helperText="💡 Use {{placeholder}} for dynamic inputs"
+      />
+
+      {/* User Prompt */}
+      <Textarea
+        label="User Prompt Template"
+        value={config.user_prompt}
+        onChange={(e) => onChange({ ...config, user_prompt: e.target.value })}
+        placeholder="Analyze this text: {{text}}"
+        className="min-h-[80px]"
+        required
+        helperText="💡 Use {{placeholder}} for dynamic inputs"
+      />
+
+      {/* Auto-detected Placeholders */}
+      {detectedPlaceholders.length > 0 && (
+        <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4">
+          <div className="flex items-center gap-2 text-blue-400 text-sm mb-2">
+            <span className="material-symbols-outlined text-sm">auto_awesome</span>
+            <span>Auto-detected placeholders:</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {detectedPlaceholders.map(ph => (
+              <span key={ph} className="px-3 py-1 bg-blue-500/20 text-blue-400 text-sm rounded-full">
+                {ph}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Schema (if structured) */}
+      {config.return_type === 'structured' && (
+        <Textarea
+          label="Output Schema (JSON)"
+          value={config.schema_definition}
+          onChange={(e) => onChange({ ...config, schema_definition: e.target.value })}
+          placeholder={`{
+  "type": "object",
+  "properties": {
+    "sentiment": {"type": "string"},
+    "confidence": {"type": "number"}
+  }
+}`}
+          className="min-h-[200px] font-mono text-xs"
+          required
+        />
+      )}
+
+      {/* Create Button */}
+      <Button
+        onClick={onCreateAgent}
+        disabled={!config.name || !config.system_prompt || !config.user_prompt || loading}
+        className="w-full"
+        loading={loading}
+      >
+        <span className="material-symbols-outlined text-sm mr-2">add</span>
+        Create & Use Agent
+      </Button>
+    </div>
+  );
+}
+
+// Agent Details Edit Component (for updating existing agents)
+function AgentDetailsEdit({
+  agent,
+  config,
+  onChange,
+  onSave,
+  onCancel,
+  loading
+}: {
+  agent: Agent;
+  config: {
+    name: string;
+    description: string;
+    return_type: 'structured' | 'unstructured';
+    system_prompt: string;
+    user_prompt: string;
+    schema_definition: string;
+  };
+  onChange: (config: any) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  loading: boolean;
+}) {
+  const [detectedPlaceholders, setDetectedPlaceholders] = useState<string[]>([]);
+
+  // Auto-detect placeholders from prompts
+  useEffect(() => {
+    const placeholders = new Set<string>();
+    const regex = /\{\{(\w+)\}\}/g;
+    const combinedText = `${config.system_prompt} ${config.user_prompt}`;
+    let match;
+
+    while ((match = regex.exec(combinedText)) !== null) {
+      placeholders.add(match[1]);
+    }
+
+    setDetectedPlaceholders(Array.from(placeholders));
+  }, [config.system_prompt, config.user_prompt]);
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-semibold text-white">Edit Agent</h3>
+        <span className="px-3 py-1 bg-yellow-500/20 text-yellow-400 text-xs rounded-full">
+          EDITING
+        </span>
+      </div>
+
+      {/* Agent Name */}
+      <Input
+        label="Agent Name"
+        value={config.name}
+        onChange={(e) => onChange({ ...config, name: e.target.value })}
+        placeholder="e.g., Custom Sentiment Analyzer"
+        required
+      />
+
+      {/* Description */}
+      <Textarea
+        label="Description"
+        value={config.description}
+        onChange={(e) => onChange({ ...config, description: e.target.value })}
+        placeholder="What does this agent do?"
+        className="min-h-[60px]"
+      />
+
+      {/* Return Type - Radio Buttons */}
+      <div>
+        <label className="block text-sm font-medium text-white mb-3">
+          Return Type
+          <span className="text-red-400 ml-1">*</span>
+        </label>
+        <div className="flex gap-4">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              value="structured"
+              checked={config.return_type === 'structured'}
+              onChange={(e) => onChange({ ...config, return_type: e.target.value as any })}
+              className="w-4 h-4 text-[#1173d4]"
+            />
+            <span className="text-sm text-white">Structured (JSON)</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              value="unstructured"
+              checked={config.return_type === 'unstructured'}
+              onChange={(e) => onChange({ ...config, return_type: e.target.value as any })}
+              className="w-4 h-4 text-[#1173d4]"
+            />
+            <span className="text-sm text-white">Unstructured (Text)</span>
+          </label>
+        </div>
+      </div>
+
+      {/* System Prompt */}
+      <Textarea
+        label="System Prompt"
+        value={config.system_prompt}
+        onChange={(e) => onChange({ ...config, system_prompt: e.target.value })}
+        placeholder="You are an expert at analyzing sentiment..."
+        className="min-h-[120px]"
+        required
+        helperText="💡 Use {{placeholder}} for dynamic inputs"
+      />
+
+      {/* User Prompt */}
+      <Textarea
+        label="User Prompt Template"
+        value={config.user_prompt}
+        onChange={(e) => onChange({ ...config, user_prompt: e.target.value })}
+        placeholder="Analyze this text: {{text}}"
+        className="min-h-[80px]"
+        required
+        helperText="💡 Use {{placeholder}} for dynamic inputs"
+      />
+
+      {/* Auto-detected Placeholders */}
+      {detectedPlaceholders.length > 0 && (
+        <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4">
+          <div className="flex items-center gap-2 text-blue-400 text-sm mb-2">
+            <span className="material-symbols-outlined text-sm">auto_awesome</span>
+            <span>Auto-detected placeholders:</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {detectedPlaceholders.map(ph => (
+              <span key={ph} className="px-3 py-1 bg-blue-500/20 text-blue-400 text-sm rounded-full">
+                {ph}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Schema (if structured) */}
+      {config.return_type === 'structured' && (
+        <Textarea
+          label="Output Schema (JSON)"
+          value={config.schema_definition}
+          onChange={(e) => onChange({ ...config, schema_definition: e.target.value })}
+          placeholder={`{
+  "type": "object",
+  "properties": {
+    "sentiment": {"type": "string"},
+    "confidence": {"type": "number"}
+  }
+}`}
+          className="min-h-[200px] font-mono text-xs"
+          required
+        />
+      )}
+
+      {/* Action Buttons */}
+      <div className="flex gap-3">
+        <Button
+          onClick={onCancel}
+          variant="outline"
+          className="flex-1"
+          disabled={loading}
+        >
+          Cancel
+        </Button>
+        <Button
+          onClick={onSave}
+          disabled={!config.name || !config.system_prompt || !config.user_prompt || loading}
+          className="flex-1"
+          loading={loading}
+        >
+          <span className="material-symbols-outlined text-sm mr-2">save</span>
+          Save Changes
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave, edges, nodes, nodeExecutionCache, onExecuteNode }: NodeConfigModalProps) {
   // Debug: Log props received
   console.log('[NodeConfigModal] Component props:', {
@@ -45,6 +556,33 @@ export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave, e
   const [config, setConfig] = useState<any>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
+
+  // Tab system state
+  const [activeTab, setActiveTab] = useState<AgentTab>('config');
+  const [agentMode, setAgentMode] = useState<'select' | 'create'>('select');
+  const [inlineAgentConfig, setInlineAgentConfig] = useState({
+    name: '',
+    description: '',
+    return_type: 'structured' as 'structured' | 'unstructured',
+    system_prompt: '',
+    user_prompt: '',
+    schema_definition: ''
+  });
+
+  // Full agent details state
+  const [fullAgentDetails, setFullAgentDetails] = useState<Agent | null>(null);
+  const [loadingAgentDetails, setLoadingAgentDetails] = useState(false);
+
+  // Edit mode state for existing agents
+  const [isEditingAgent, setIsEditingAgent] = useState(false);
+  const [editAgentConfig, setEditAgentConfig] = useState({
+    name: '',
+    description: '',
+    return_type: 'structured' as 'structured' | 'unstructured',
+    system_prompt: '',
+    user_prompt: '',
+    schema_definition: ''
+  });
 
   // Schema inspection state
   const [schemaData, setSchemaData] = useState<any>(null);
@@ -75,7 +613,7 @@ export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave, e
 
   // API hooks for fetching data
   const { data: credentials, loading: credentialsLoading, error: credentialsError } = useCredentials();
-  const { data: agents, loading: agentsLoading, error: agentsError } = useAgents();
+  const { data: agents, loading: agentsLoading, error: agentsError, refetch: refetchAgents } = useAgents();
 
   useEffect(() => {
     // Debug logging
@@ -677,13 +1215,37 @@ export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave, e
       case 'agent_select':
         return (
           <div key={field.name} className="mb-4">
-            <label className="block text-sm font-medium text-white mb-2">
-              {field.label}
-              {field.required && <span className="text-red-400 ml-1">*</span>}
-            </label>
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-sm font-medium text-white">
+                {field.label}
+                {field.required && <span className="text-red-400 ml-1">*</span>}
+              </label>
+              {fieldValue && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('details')}
+                  className="text-xs text-[#1173d4] hover:text-[#0d5aa7] flex items-center gap-1"
+                >
+                  View Details
+                  <span className="material-symbols-outlined text-xs">arrow_forward</span>
+                </button>
+              )}
+            </div>
             <select
-              value={fieldValue}
-              onChange={(e) => handleFieldChange(field.name, e.target.value)}
+              value={fieldValue || ''}
+              onChange={(e) => {
+                if (e.target.value === '_create_new_') {
+                  setAgentMode('create');
+                  handleFieldChange(field.name, '');
+                  setActiveTab('details'); // Auto-switch to details tab
+                } else if (e.target.value === '') {
+                  setAgentMode('select');
+                  handleFieldChange(field.name, '');
+                } else {
+                  setAgentMode('select');
+                  handleFieldChange(field.name, e.target.value);
+                }
+              }}
               disabled={agentsLoading}
               className={`w-full bg-[#111a22] border rounded-md px-3 py-2 text-white text-sm ${
                 fieldError ? 'border-red-500' : 'border-[#374151] focus:border-[#1173d4]'
@@ -697,11 +1259,14 @@ export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave, e
               ) : agents?.results?.length === 0 ? (
                 <option disabled>No agents found</option>
               ) : (
-                agents?.results?.map((agent: any) => (
-                  <option key={agent.id} value={agent.id}>
-                    {agent.name} ({agent.return_type})
-                  </option>
-                ))
+                <>
+                  {agents?.results?.map((agent: any) => (
+                    <option key={agent.id} value={agent.id}>
+                      {agent.name} ({agent.return_type})
+                    </option>
+                  ))}
+                  <option value="_create_new_">✨ Create New Agent</option>
+                </>
               )}
             </select>
             {field.help && (
@@ -944,7 +1509,208 @@ export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave, e
     }
   };
 
+  // Get selected agent for details view
+  const selectedAgent = agents?.results?.find((a: any) => a.id === Number(config.agent_id));
+
+  // Fetch full agent details when switching to details tab
+  useEffect(() => {
+    const fetchAgentDetails = async () => {
+      if (activeTab === 'details' && agentMode === 'select' && config.agent_id) {
+        setLoadingAgentDetails(true);
+        try {
+          const agentDetails = await api.getAgent(Number(config.agent_id));
+          setFullAgentDetails(agentDetails);
+        } catch (error) {
+          console.error('Failed to fetch agent details:', error);
+          alert('Failed to load agent details. Please try again.');
+        } finally {
+          setLoadingAgentDetails(false);
+        }
+      } else {
+        // Clear details when switching away from details tab
+        setFullAgentDetails(null);
+      }
+    };
+
+    fetchAgentDetails();
+  }, [activeTab, agentMode, config.agent_id]);
+
+  // Reset agent details when modal closes
+  useEffect(() => {
+    if (!isOpen) {
+      setFullAgentDetails(null);
+      setActiveTab('config');
+      setAgentMode('select');
+      setIsEditingAgent(false);
+    }
+  }, [isOpen]);
+
+  // Exit edit mode when switching away from details tab
+  useEffect(() => {
+    if (activeTab !== 'details') {
+      setIsEditingAgent(false);
+    }
+  }, [activeTab]);
+
+  // Helper: Inline agent creation handler
+  const handleCreateInlineAgent = async () => {
+    try {
+      setLoading(true);
+
+      // Extract placeholders from prompts
+      const placeholders: Record<string, string> = {};
+      const regex = /\{\{(\w+)\}\}/g;
+      const combinedText = `${inlineAgentConfig.system_prompt} ${inlineAgentConfig.user_prompt}`;
+      let match;
+
+      while ((match = regex.exec(combinedText)) !== null) {
+        placeholders[match[1]] = `Input value for ${match[1]}`;
+      }
+
+      // Prepare agent data
+      const agentData: AgentCompleteCreate = {
+        name: inlineAgentConfig.name,
+        description: inlineAgentConfig.description,
+        return_type: inlineAgentConfig.return_type,
+        project: 1, // TODO: Get from workflow/project context
+        prompts: [
+          {
+            prompt_type: 'system',
+            content: inlineAgentConfig.system_prompt,
+            placeholders
+          },
+          {
+            prompt_type: 'user',
+            content: inlineAgentConfig.user_prompt,
+            placeholders
+          }
+        ],
+        schema_definition: inlineAgentConfig.return_type === 'structured'
+          ? JSON.parse(inlineAgentConfig.schema_definition)
+          : undefined
+      };
+
+      // Create agent via API
+      const newAgent = await api.createAgentComplete(agentData);
+
+      // Refetch agents list to include newly created agent
+      await refetchAgents();
+
+      // Set newly created agent as selected (now it will appear in dropdown)
+      handleFieldChange('agent_id', newAgent.id.toString());
+
+      // Switch back to select mode and config tab
+      setAgentMode('select');
+      setActiveTab('config');
+
+      // Show success
+      alert(`Agent "${newAgent.name}" created successfully!`);
+
+    } catch (error: any) {
+      console.error('Failed to create agent:', error);
+      alert(error.message || 'Failed to create agent. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Helper: Enter edit mode for existing agent
+  const enterEditMode = () => {
+    if (!fullAgentDetails) return;
+
+    const systemPrompt = fullAgentDetails.prompts?.find(p => p.prompt_type === 'system');
+    const userPrompt = fullAgentDetails.prompts?.find(p => p.prompt_type === 'user');
+
+    setEditAgentConfig({
+      name: fullAgentDetails.name,
+      description: fullAgentDetails.description,
+      return_type: fullAgentDetails.return_type,
+      system_prompt: systemPrompt?.content || '',
+      user_prompt: userPrompt?.content || '',
+      schema_definition: fullAgentDetails.schema_definition
+        ? JSON.stringify(fullAgentDetails.schema_definition, null, 2)
+        : ''
+    });
+
+    setIsEditingAgent(true);
+  };
+
+  // Helper: Update existing agent
+  const handleUpdateAgent = async () => {
+    if (!fullAgentDetails) return;
+
+    try {
+      setLoading(true);
+
+      const systemPrompt = fullAgentDetails.prompts?.find(p => p.prompt_type === 'system');
+      const userPrompt = fullAgentDetails.prompts?.find(p => p.prompt_type === 'user');
+
+      // Extract placeholders from prompts
+      const placeholders: Record<string, string> = {};
+      const regex = /\{\{(\w+)\}\}/g;
+      const combinedText = `${editAgentConfig.system_prompt} ${editAgentConfig.user_prompt}`;
+      let match;
+
+      while ((match = regex.exec(combinedText)) !== null) {
+        placeholders[match[1]] = `Input value for ${match[1]}`;
+      }
+
+      // 1. Update agent basic info
+      await api.updateAgent(fullAgentDetails.id, {
+        name: editAgentConfig.name,
+        description: editAgentConfig.description,
+        return_type: editAgentConfig.return_type,
+        schema_definition: editAgentConfig.return_type === 'structured'
+          ? JSON.parse(editAgentConfig.schema_definition)
+          : undefined,
+        project: fullAgentDetails.project
+      });
+
+      // 2. Update system prompt
+      if (systemPrompt) {
+        await api.updatePrompt(systemPrompt.id, {
+          agent: fullAgentDetails.id,
+          prompt_type: 'system',
+          content: editAgentConfig.system_prompt,
+          placeholders
+        });
+      }
+
+      // 3. Update user prompt
+      if (userPrompt) {
+        await api.updatePrompt(userPrompt.id, {
+          agent: fullAgentDetails.id,
+          prompt_type: 'user',
+          content: editAgentConfig.user_prompt,
+          placeholders
+        });
+      }
+
+      // 4. Refetch full agent details
+      const updatedAgent = await api.getAgent(fullAgentDetails.id);
+      setFullAgentDetails(updatedAgent);
+
+      // 5. Refetch agents list (to update dropdown)
+      await refetchAgents();
+
+      // 6. Exit edit mode
+      setIsEditingAgent(false);
+
+      // 7. Show success
+      alert(`Agent "${editAgentConfig.name}" updated successfully!`);
+
+    } catch (error: any) {
+      console.error('Failed to update agent:', error);
+      alert(error.message || 'Failed to update agent. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   if (!isOpen || !nodeConfig) return null;
+
+  // Check if this is an agent node to show tabs
+  const showAgentTabs = nodeType === 'agent';
 
   return (
     <>
@@ -956,7 +1722,7 @@ export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave, e
 
       {/* Modal */}
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="bg-[#1a2633] rounded-lg border border-[#374151] w-full max-w-2xl max-h-[90vh] overflow-hidden">
+        <div className={`bg-[#1a2633] rounded-lg border border-[#374151] w-full ${showAgentTabs ? 'max-w-3xl' : 'max-w-2xl'} max-h-[90vh] overflow-hidden flex flex-col`}>
           {/* Header */}
           <div className="flex items-center justify-between p-6 border-b border-[#374151]">
             <div className="flex items-center space-x-3">
@@ -980,6 +1746,9 @@ export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave, e
             </button>
           </div>
 
+          {/* Tab Navigation (only for agent nodes) */}
+          {showAgentTabs && <TabNavigation activeTab={activeTab} onTabChange={setActiveTab} />}
+
           {/* API Errors */}
           {(credentialsError || agentsError) && (
             <div className="px-6 pt-4">
@@ -994,9 +1763,65 @@ export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave, e
             </div>
           )}
 
-          {/* Content */}
-          <div className="p-6 overflow-y-auto max-h-[60vh]">
-            {nodeConfig.fields?.map(renderField)}
+          {/* Content - Tab-based for agent nodes, normal for others */}
+          <div className="flex-1 overflow-y-auto p-6">
+            {showAgentTabs ? (
+              activeTab === 'config' ? (
+                // Configuration Tab
+                <div className="space-y-6">
+                  {nodeConfig.fields?.map(renderField)}
+                </div>
+              ) : (
+                // Agent Details Tab
+                <div>
+                  {loadingAgentDetails ? (
+                    <div className="flex flex-col items-center justify-center py-12">
+                      <span className="material-symbols-outlined text-4xl text-[#1173d4] mb-4 animate-spin">
+                        progress_activity
+                      </span>
+                      <p className="text-gray-400">Loading agent details...</p>
+                    </div>
+                  ) : agentMode === 'select' && fullAgentDetails ? (
+                    isEditingAgent ? (
+                      <AgentDetailsEdit
+                        agent={fullAgentDetails}
+                        config={editAgentConfig}
+                        onChange={setEditAgentConfig}
+                        onSave={handleUpdateAgent}
+                        onCancel={() => setIsEditingAgent(false)}
+                        loading={loading}
+                      />
+                    ) : (
+                      <AgentDetailsReadOnly
+                        agent={fullAgentDetails}
+                        onEdit={enterEditMode}
+                      />
+                    )
+                  ) : agentMode === 'create' ? (
+                    <AgentDetailsCreate
+                      config={inlineAgentConfig}
+                      onChange={setInlineAgentConfig}
+                      onCreateAgent={handleCreateInlineAgent}
+                      loading={loading}
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-12 text-center">
+                      <span className="material-symbols-outlined text-6xl text-gray-500 mb-4">
+                        info
+                      </span>
+                      <p className="text-gray-400">
+                        Select an agent from the Configuration tab to view details
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )
+            ) : (
+              // Non-agent nodes - render fields normally
+              <div className="space-y-6">
+                {nodeConfig.fields?.map(renderField)}
+              </div>
+            )}
           </div>
 
           {/* Footer */}
