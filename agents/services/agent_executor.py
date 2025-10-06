@@ -177,6 +177,14 @@ class AgentExecutor:
                 elif prompt.prompt_type == 'user':
                     user_prompt = content
 
+            # DEBUG LOGGING
+            print(f"\n{'='*80}")
+            print(f"[AGENT EXECUTOR DEBUG] Agent: {self.agent.name} (ID: {self.agent.id})")
+            print(f"[AGENT EXECUTOR DEBUG] Placeholder values: {placeholder_values}")
+            print(f"[AGENT EXECUTOR DEBUG] System prompt (first 300 chars): {system_prompt[:300]}")
+            print(f"[AGENT EXECUTOR DEBUG] User prompt (first 300 chars): {user_prompt[:300]}")
+            print(f"{'='*80}\n")
+
             if not system_prompt or not user_prompt:
                 raise AgentExecutionError("Agent must have both system and user prompts")
 

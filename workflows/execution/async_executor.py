@@ -278,86 +278,69 @@ def _execute_full_workflow(execution: WorkflowExecution):
 def _get_upstream_data(workflow, target_node_id):
     """
     Get upstream data for a node by executing its dependencies.
-    Reuses logic from views.py execute endpoint.
+    Separates data inputs (to iterate over) from context inputs (reference data).
 
     Args:
         workflow: Workflow instance
-        target_node_id: ID of target node
+        target_node_id: ID of target node (backend database ID)
 
     Returns:
-        Input data from upstream nodes
+        dict: {
+            'data': [...],      # Rows to process (from data-input handle)
+            'context': {...}    # Reference data (from context-input handle)
+        }
+        OR list for backward compatibility (if no context edges)
     """
     from workflows.execution.node_handlers.factory import NodeFactory
 
-    # Build mapping from visual node IDs to database node IDs
-    visual_to_db_map = {}
-    db_to_visual_map = {}
-
-    visual_nodes = workflow.configuration.get('nodes', [])
-    db_nodes = WorkflowNode.objects.filter(workflow=workflow, is_active=True).order_by('position')
-
-    # Match nodes by type and configuration keys
-    for visual_node in visual_nodes:
-        visual_id = visual_node.get('id')
-        visual_type = visual_node.get('type')
-        visual_config = visual_node.get('config', {})
-
-        # Find matching database node
-        for db_node in db_nodes:
-            if db_node.node_type != visual_type:
-                continue
-
-            # Match by key configuration fields
-            if visual_type == 'database' and visual_config.get('credential_id') == db_node.configuration.get('credential_id'):
-                visual_to_db_map[visual_id] = db_node.id
-                db_to_visual_map[db_node.id] = visual_id
-                break
-            elif visual_type == 'agent' and visual_config.get('agent_id') == db_node.configuration.get('agent_id'):
-                visual_to_db_map[visual_id] = db_node.id
-                db_to_visual_map[db_node.id] = visual_id
-                break
-            elif visual_type == 'output' and visual_config.get('table_name') == db_node.configuration.get('table_name'):
-                visual_to_db_map[visual_id] = db_node.id
-                db_to_visual_map[db_node.id] = visual_id
-                break
-            elif visual_type in ['filter', 'script', 'conditional']:
-                visual_to_db_map[visual_id] = db_node.id
-                db_to_visual_map[db_node.id] = visual_id
-                break
-
-    # Get visual node ID for the target node
-    target_visual_id = db_to_visual_map.get(target_node_id)
-    if not target_visual_id:
-        return None
-
-    # Get workflow edges from configuration
+    # Get workflow edges from configuration (edges now use backend IDs directly)
     edges = workflow.configuration.get('edges', [])
 
-    # Find upstream nodes
-    upstream_edges = [edge for edge in edges if edge.get('target') == target_visual_id]
+    # Find upstream edges pointing to target node (target is now backend ID)
+    upstream_edges = [edge for edge in edges if edge.get('target') == target_node_id]
 
     if not upstream_edges:
         return None
 
-    # Execute upstream nodes and collect results
-    upstream_results = {}
+    # Separate data edges from context edges
+    data_edges = []
+    context_edges = []
 
     for edge in upstream_edges:
-        source_visual_id = edge.get('source', '')
-        source_db_id = visual_to_db_map.get(source_visual_id)
+        target_handle = edge.get('targetHandle')
+        if target_handle == 'context-input':
+            context_edges.append(edge)
+        else:
+            # No targetHandle or 'data-input' - treat as data edge (backward compatibility)
+            data_edges.append(edge)
 
-        if not source_db_id:
+    # DEBUG LOGGING
+    print(f"\n{'='*80}")
+    print(f"[UPSTREAM DATA DEBUG] Target node: {target_node_id}")
+    print(f"[UPSTREAM DATA DEBUG] Total upstream edges: {len(upstream_edges)}")
+    print(f"[UPSTREAM DATA DEBUG] Data edges: {len(data_edges)}")
+    for edge in data_edges:
+        print(f"  - Source: {edge.get('source')}, targetHandle: {edge.get('targetHandle')}")
+    print(f"[UPSTREAM DATA DEBUG] Context edges: {len(context_edges)}")
+    for edge in context_edges:
+        print(f"  - Source: {edge.get('source')}, targetHandle: {edge.get('targetHandle')}")
+    print(f"{'='*80}\n")
+
+    # Execute data sources (these are iterated over)
+    data_results = []
+    for edge in data_edges:
+        source_node_id = edge.get('source')  # Now a backend ID
+
+        if not source_node_id:
             continue
 
         try:
-            # Get source node
             source_node = WorkflowNode.objects.get(
-                id=source_db_id,
+                id=source_node_id,
                 workflow=workflow,
                 is_active=True
             )
 
-            # Create and execute source node instance
             source_instance = NodeFactory.create_node(
                 node_id=source_node.id,
                 node_type=source_node.node_type,
@@ -367,16 +350,66 @@ def _get_upstream_data(workflow, target_node_id):
                 position=source_node.position
             )
 
-            # Execute source node
             source_results = source_instance.run()
-            upstream_results[source_visual_id] = source_results
+            if source_results:
+                data_results.extend(source_results)
+                print(f"[DATA SOURCE DEBUG] Source node {source_node_id} returned {len(source_results)} rows")
+                if source_results:
+                    print(f"[DATA SOURCE DEBUG] Sample row keys: {list(source_results[0].keys())}")
 
         except (WorkflowNode.DoesNotExist, Exception) as e:
-            print(f"ERROR: Failed to execute upstream node {source_visual_id}: {e}")
+            print(f"ERROR: Failed to execute data source {source_node_id}: {e}")
             continue
 
-    # Return first upstream result (for agent nodes)
-    if upstream_results:
-        return list(upstream_results.values())[0]
+    # Execute context sources (these are broadcast to all data rows)
+    context_data = {}
+    for edge in context_edges:
+        source_node_id = edge.get('source')  # Now a backend ID
 
-    return None
+        if not source_node_id:
+            continue
+
+        try:
+            source_node = WorkflowNode.objects.get(
+                id=source_node_id,
+                workflow=workflow,
+                is_active=True
+            )
+
+            source_instance = NodeFactory.create_node(
+                node_id=source_node.id,
+                node_type=source_node.node_type,
+                configuration=source_node.configuration,
+                workflow_id=workflow.id,
+                execution_id=0,
+                position=source_node.position
+            )
+
+            source_results = source_instance.run()
+            if source_results and len(source_results) > 0:
+                # Merge first row from context source into context_data
+                context_data.update(source_results[0])
+                print(f"[CONTEXT SOURCE DEBUG] Source node {source_node_id} returned {len(source_results)} rows")
+                print(f"[CONTEXT SOURCE DEBUG] Context row: {source_results[0]}")
+                print(f"[CONTEXT SOURCE DEBUG] Updated context_data: {context_data}")
+
+        except (WorkflowNode.DoesNotExist, Exception) as e:
+            print(f"ERROR: Failed to execute context source {source_node_id}: {e}")
+            continue
+
+    # Return structured data if we have context edges, otherwise backward compatible
+    if context_edges:
+        result = {
+            'data': data_results,
+            'context': context_data
+        }
+        print(f"\n[FINAL RETURN DEBUG] Returning structured data:")
+        print(f"  - data rows: {len(result['data'])}")
+        print(f"  - context keys: {list(result['context'].keys())}")
+        print(f"  - context values sample: {str(result['context'])[:200]}")
+        print(f"{'='*80}\n")
+        return result
+    else:
+        # Backward compatibility: return data results directly
+        print(f"\n[FINAL RETURN DEBUG] Returning backward-compatible list ({len(data_results) if data_results else 0} rows)\n")
+        return data_results if data_results else None

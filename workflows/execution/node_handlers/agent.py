@@ -156,16 +156,39 @@ class AgentNode(BaseNode):
         if not input_data:
             return []
 
-        if not isinstance(input_data, list):
-            raise ValueError("Agent node expects input_data to be a list of records")
+        # Handle new structured format: {'data': [...], 'context': {...}}
+        if isinstance(input_data, dict) and 'data' in input_data:
+            data_rows = input_data.get('data', [])
+            context_row = input_data.get('context', {})
+            print(f"\n[AGENT NODE DEBUG] Received structured input:")
+            print(f"  - data rows: {len(data_rows)}")
+            print(f"  - context keys: {list(context_row.keys())}")
+            print(f"  - context: {context_row}")
+        else:
+            # Backward compatibility: treat as data rows
+            if isinstance(input_data, list):
+                data_rows = input_data
+            else:
+                data_rows = []
+            context_row = {}
+            print(f"\n[AGENT NODE DEBUG] Received legacy format: {len(data_rows) if data_rows else 0} rows")
 
         # If no records, return empty
-        if len(input_data) == 0:
+        if not data_rows or len(data_rows) == 0:
             return []
+
+        # Merge context into each data row BEFORE mapping
+        merged_data = []
+        for record in data_rows:
+            # Merge context columns into this row
+            merged_record = {**record, **context_row}
+            merged_data.append(merged_record)
+
+        print(f"[AGENT NODE DEBUG] After merging context, sample merged record keys: {list(merged_data[0].keys()) if merged_data else []}")
 
         # Apply input mapping to prepare agent inputs
         mapped_data = []
-        for record in input_data:
+        for record in merged_data:
             # Extract mapped values from record
             agent_input = {}
             for placeholder, column_ref in input_mapping.items():

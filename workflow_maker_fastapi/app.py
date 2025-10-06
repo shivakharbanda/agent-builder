@@ -98,6 +98,13 @@ class SchemaInspectionResult(BaseModel):
     metadata: DataSourceMetadata
 
 
+class DatabaseQueryResult(BaseModel):
+    """Database query execution result"""
+    columns: List[str]
+    data: List[Dict[str, Any]]
+    row_count: int
+
+
 # ------------------------------------------------------------------------------
 # Generator agent prompt: workflow structure generation
 # ------------------------------------------------------------------------------
@@ -109,6 +116,7 @@ AVAILABLE TOOLS:
 1. get_credentials(search="", category="RDBMS") - Find database credentials for current user
 2. get_agents(search="") - Find AI agents for current project
 3. inspect_database_schema(credential_id) - Get database tables, columns, and sample data to generate SQL queries
+4. query_database(credential_id, query) - Execute SQL queries to analyze actual data (automatically limited to 1 row for safety)
 
 GOAL: Use tools to find resources, inspect schemas, generate fully configured workflows, present preview, get confirmation, then output JSON.
 
@@ -172,6 +180,12 @@ CONVERSATION FLOW:
 
    IMPORTANT: You do NOT have table/column names until this tool returns.
    DO NOT ask user for credential_id - you saved it from get_credentials() result.
+
+   OPTIONAL - Call query_database to analyze actual data:
+   - If you need to understand data patterns, distributions, or content to generate better SQL queries
+   - Call: query_database(credential_id=credential_id, query="SELECT * FROM table_name")
+   - Use returned data to inform your workflow configuration
+   - The query will be automatically limited to 1 row for safety
 
 6) Generate final JSON configuration using:
    - credential_id from get_credentials()
@@ -398,7 +412,7 @@ generator_agent = Agent(
 print(f"\n{'*'*80}")
 print(f"🚀 WORKFLOW GENERATOR AGENT INITIALIZED")
 print(f"   Model: {MODEL_NAME}")
-print(f"   Tools: get_credentials, get_agents, inspect_database_schema")
+print(f"   Tools: get_credentials, get_agents, inspect_database_schema, query_database")
 print(f"{'*'*80}\n")
 
 
@@ -608,6 +622,81 @@ async def inspect_database_schema(ctx: RunContext[str], credential_id: int) -> S
         import traceback
         print(f"   ← Traceback:\n{traceback.format_exc()}")
         raise ModelRetry(f"Error inspecting database schema: {str(e)}")
+
+
+@generator_agent.tool
+async def query_database(ctx: RunContext[str], credential_id: int, query: str) -> DatabaseQueryResult:
+    """
+    Execute a SQL query to analyze data from the database.
+
+    Use this tool AFTER finding a credential with get_credentials() to run SQL queries
+    and inspect actual data. This helps understand data patterns, distributions, and content
+    to generate better workflow configurations.
+
+    Args:
+        credential_id: ID of the database credential to query against
+        query: SQL query to execute (will be automatically limited to 1 row for safety)
+
+    Returns:
+        Query results including columns, sample data, and row count
+    """
+    session_id = ctx.deps  # Just a string now
+
+    # DIAGNOSTIC LOGGING
+    print(f"\n{'='*80}")
+    print(f"🔧 TOOL CALLED: query_database")
+    print(f"   Timestamp: {datetime.now(timezone.utc).isoformat()}")
+    print(f"   Session ID: {session_id}")
+    print(f"   Parameters: credential_id={credential_id}, query='{query}'")
+    print(f"{'='*80}\n")
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            url = f"{DJANGO_API_BASE}/api/builder-tools/test_query/"
+            json_body = {
+                "credential_id": credential_id,
+                "query": query,
+                "session_id": session_id
+            }
+
+            print(f"   → HTTP POST {url}")
+            print(f"   → JSON Body: {json_body}")
+
+            response = await client.post(url, json=json_body)
+
+            print(f"   ← HTTP Status: {response.status_code}")
+            print(f"   ← Response Body: {response.text[:500]}")  # Limit to first 500 chars
+
+            response.raise_for_status()
+            data = response.json()
+            result = DatabaseQueryResult(**data)
+
+            # Log success
+            print(f"✅ query_database SUCCESS")
+            print(f"   Columns: {result.columns}")
+            print(f"   Row count: {result.row_count}")
+            if result.data:
+                print(f"   Sample data: {result.data[0] if len(result.data) > 0 else 'No data'}")
+
+            return result
+    except httpx.HTTPStatusError as e:
+        print(f"❌ query_database HTTP ERROR: {e.response.status_code}")
+        print(f"   ← Response Body: {e.response.text}")
+        if e.response.status_code >= 500:
+            raise ModelRetry(f"Server error executing query: {e.response.status_code}")
+        elif e.response.status_code == 404:
+            raise ModelRetry(f"Credential {credential_id} not found. Please verify the credential ID.")
+        else:
+            raise ModelRetry(f"Cannot execute query for credential {credential_id}: {e.response.text}")
+    except httpx.TimeoutException:
+        print(f"❌ query_database TIMEOUT")
+        raise ModelRetry("Query execution timeout. Query may be too complex or database may be slow. Please retry.")
+    except Exception as e:
+        # Log and raise retry for any other exception
+        print(f"❌ query_database EXCEPTION: {type(e).__name__}: {e}")
+        import traceback
+        print(f"   ← Traceback:\n{traceback.format_exc()}")
+        raise ModelRetry(f"Error executing database query: {str(e)}")
 
 
 # ------------------------------------------------------------------------------
@@ -874,7 +963,7 @@ async def generate_workflow(body: GenerateRequest) -> StreamingResponse:
         deps = session_id  # Just a string
 
         print(f"🤖 Starting agent.run_stream with deps={deps}")
-        print(f"   Agent tools: get_credentials, get_agents, inspect_database_schema")
+        print(f"   Agent tools: get_credentials, get_agents, inspect_database_schema, query_database")
 
         # Run the generator agent with full history, stream model output, and pass session_id as deps
         async with generator_agent.run_stream(prompt, message_history=messages, deps=deps) as result:

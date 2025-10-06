@@ -426,6 +426,17 @@ class WorkflowViewSet(viewsets.ModelViewSet):
 
                 workflow = workflow_serializer.save(created_by=request.user)
 
+                # Create workflow nodes and get updated configuration with backend IDs
+                node_id_mapping, updated_configuration = self._create_workflow_nodes_from_config(
+                    workflow,
+                    request.data.get('configuration', {}),
+                    request.user
+                )
+
+                # Update workflow configuration with backend IDs
+                workflow.configuration = updated_configuration
+                workflow.save()
+
                 # Create/update properties with flexible date handling
                 properties_data_clean = self._clean_properties_data(properties_data)
                 properties, created = WorkflowProperties.objects.get_or_create(
@@ -453,10 +464,7 @@ class WorkflowViewSet(viewsets.ModelViewSet):
                     }
                 )
 
-                # Create workflow nodes from configuration
-                self._create_workflow_nodes_from_config(workflow, request.data.get('configuration', {}), request.user)
-
-                # Return complete workflow data
+                # Return complete workflow data (configuration now has backend IDs)
                 complete_serializer = WorkflowSerializer(workflow)
                 return Response(complete_serializer.data, status=201)
 
@@ -506,14 +514,25 @@ class WorkflowViewSet(viewsets.ModelViewSet):
         return cleaned_data
 
     def _create_workflow_nodes_from_config(self, workflow, configuration, user):
-        """Create WorkflowNode records from configuration, avoiding duplicates"""
+        """
+        Create WorkflowNode records from configuration.
+        Returns tuple: (node_id_mapping, updated_configuration)
+
+        The updated configuration has all visual IDs replaced with new backend IDs.
+        """
         nodes_data = configuration.get('nodes', [])
+        edges_data = configuration.get('edges', [])
 
         # Clear existing nodes first
         WorkflowNode.objects.filter(workflow=workflow).delete()
 
+        # Build ID mapping as we create nodes
+        node_id_mapping = {}
+
         for index, node_data in enumerate(nodes_data):
-            WorkflowNode.objects.create(
+            visual_id = node_data.get('id')  # Frontend visual ID
+
+            node = WorkflowNode.objects.create(
                 workflow=workflow,
                 node_type=node_data.get('type', 'input'),
                 position=index,
@@ -521,6 +540,57 @@ class WorkflowViewSet(viewsets.ModelViewSet):
                 configuration=node_data.get('config', {}),
                 created_by=user
             )
+
+            # Map visual ID to backend ID
+            if visual_id:
+                # Convert to string for consistent mapping
+                node_id_mapping[str(visual_id)] = node.id
+
+        # Update configuration with new backend IDs
+        updated_configuration = configuration.copy()
+
+        # Update node IDs
+        updated_nodes = []
+        for node_data in nodes_data:
+            visual_id = str(node_data.get('id'))
+            backend_id = node_id_mapping.get(visual_id, node_data.get('id'))
+
+            updated_node = node_data.copy()
+            updated_node['id'] = backend_id
+
+            # Update input_mapping references in agent nodes
+            if updated_node.get('config') and 'input_mapping' in updated_node['config']:
+                updated_input_mapping = {}
+                for placeholder, column_ref in updated_node['config']['input_mapping'].items():
+                    # column_ref format: "nodeId.columnName" or just "columnName"
+                    if isinstance(column_ref, str) and '.' in column_ref:
+                        old_node_id, column_name = column_ref.split('.', 1)
+                        new_node_id = node_id_mapping.get(old_node_id, old_node_id)
+                        updated_input_mapping[placeholder] = f"{new_node_id}.{column_name}"
+                    else:
+                        updated_input_mapping[placeholder] = column_ref
+
+                updated_node['config'] = updated_node['config'].copy()
+                updated_node['config']['input_mapping'] = updated_input_mapping
+
+            updated_nodes.append(updated_node)
+
+        updated_configuration['nodes'] = updated_nodes
+
+        # Update edge source/target IDs
+        updated_edges = []
+        for edge_data in edges_data:
+            visual_source = str(edge_data.get('source'))
+            visual_target = str(edge_data.get('target'))
+
+            updated_edge = edge_data.copy()
+            updated_edge['source'] = node_id_mapping.get(visual_source, edge_data.get('source'))
+            updated_edge['target'] = node_id_mapping.get(visual_target, edge_data.get('target'))
+            updated_edges.append(updated_edge)
+
+        updated_configuration['edges'] = updated_edges
+
+        return node_id_mapping, updated_configuration
 
     @action(detail=True, methods=['put'])
     def update_complete(self, request, pk=None):
@@ -531,10 +601,17 @@ class WorkflowViewSet(viewsets.ModelViewSet):
             with transaction.atomic():
                 workflow = self.get_object()
 
-                # Update main workflow fields
+                # Update workflow nodes from configuration - returns mapping and updated config
+                node_id_mapping, updated_configuration = self._update_workflow_nodes_from_config(
+                    workflow,
+                    request.data.get('configuration', {}),
+                    request.user
+                )
+
+                # Update main workflow fields with UPDATED configuration (has backend IDs now)
                 workflow.name = request.data.get('name', workflow.name)
                 workflow.description = request.data.get('description', workflow.description)
-                workflow.configuration = request.data.get('configuration', workflow.configuration)
+                workflow.configuration = updated_configuration  # Use updated config with backend IDs
                 workflow.save()
 
                 # Update/Create properties atomically
@@ -552,10 +629,7 @@ class WorkflowViewSet(viewsets.ModelViewSet):
                             setattr(properties, field, value)
                         properties.save()
 
-                # Update workflow nodes from configuration
-                self._update_workflow_nodes_from_config(workflow, request.data.get('configuration', {}), request.user)
-
-                # Return complete workflow data
+                # Return complete workflow data (configuration now has backend IDs)
                 complete_serializer = WorkflowSerializer(workflow)
                 return Response(complete_serializer.data)
 
@@ -565,14 +639,25 @@ class WorkflowViewSet(viewsets.ModelViewSet):
             }, status=400)
 
     def _update_workflow_nodes_from_config(self, workflow, configuration, user):
-        """Update WorkflowNode records from configuration, replacing existing nodes"""
+        """
+        Update WorkflowNode records from configuration, replacing existing nodes.
+        Returns tuple: (node_id_mapping, updated_configuration)
+
+        The updated configuration has all visual/old IDs replaced with new backend IDs.
+        """
         nodes_data = configuration.get('nodes', [])
+        edges_data = configuration.get('edges', [])
 
         # Clear existing nodes first (same pattern as create)
         WorkflowNode.objects.filter(workflow=workflow).delete()
 
+        # Build ID mapping as we create nodes
+        node_id_mapping = {}
+
         for index, node_data in enumerate(nodes_data):
-            WorkflowNode.objects.create(
+            old_id = node_data.get('id')  # Could be visual ID or old backend ID
+
+            node = WorkflowNode.objects.create(
                 workflow=workflow,
                 node_type=node_data.get('type', 'input'),
                 position=index,
@@ -580,6 +665,57 @@ class WorkflowViewSet(viewsets.ModelViewSet):
                 configuration=node_data.get('config', {}),
                 created_by=user
             )
+
+            # Map old ID to new backend ID
+            if old_id:
+                # Convert to string for consistent mapping (handles both int and string IDs)
+                node_id_mapping[str(old_id)] = node.id
+
+        # Update configuration with new backend IDs
+        updated_configuration = configuration.copy()
+
+        # Update node IDs
+        updated_nodes = []
+        for node_data in nodes_data:
+            old_id = str(node_data.get('id'))
+            new_id = node_id_mapping.get(old_id, node_data.get('id'))
+
+            updated_node = node_data.copy()
+            updated_node['id'] = new_id
+
+            # Update input_mapping references in agent nodes
+            if updated_node.get('config') and 'input_mapping' in updated_node['config']:
+                updated_input_mapping = {}
+                for placeholder, column_ref in updated_node['config']['input_mapping'].items():
+                    # column_ref format: "nodeId.columnName" or just "columnName"
+                    if isinstance(column_ref, str) and '.' in column_ref:
+                        old_node_id, column_name = column_ref.split('.', 1)
+                        new_node_id = node_id_mapping.get(old_node_id, old_node_id)
+                        updated_input_mapping[placeholder] = f"{new_node_id}.{column_name}"
+                    else:
+                        updated_input_mapping[placeholder] = column_ref
+
+                updated_node['config'] = updated_node['config'].copy()
+                updated_node['config']['input_mapping'] = updated_input_mapping
+
+            updated_nodes.append(updated_node)
+
+        updated_configuration['nodes'] = updated_nodes
+
+        # Update edge source/target IDs
+        updated_edges = []
+        for edge_data in edges_data:
+            old_source = str(edge_data.get('source'))
+            old_target = str(edge_data.get('target'))
+
+            updated_edge = edge_data.copy()
+            updated_edge['source'] = node_id_mapping.get(old_source, edge_data.get('source'))
+            updated_edge['target'] = node_id_mapping.get(old_target, edge_data.get('target'))
+            updated_edges.append(updated_edge)
+
+        updated_configuration['edges'] = updated_edges
+
+        return node_id_mapping, updated_configuration
 
 
 class WorkflowNodeViewSet(viewsets.ModelViewSet):

@@ -102,21 +102,12 @@ export default function CreateWorkflow() {
           setWorkflowName(workflow.name);
           setWorkflowDescription(workflow.description);
 
-          // Fix properties mapping - properties is at root level, not in configuration
-          // Merge configuration nodes with backend node IDs
-          const nodesWithDbIds = workflow.configuration.nodes.map((configNode: any, index: number) => {
-            const backendNode = workflow.nodes[index]; // Match by position
-            return {
-              ...configNode,
-              dbId: backendNode?.id // Add database ID from backend nodes array
-            };
-          });
-
+          // Backend configuration now has backend IDs directly - use as-is
           setWorkflowConfig({
-            nodes: nodesWithDbIds,
-            edges: workflow.configuration.edges,
+            nodes: workflow.configuration.nodes,  // Already has backend IDs
+            edges: workflow.configuration.edges,  // Already has backend IDs
             metadata: workflow.configuration.metadata,
-            properties: workflow.properties  // From root level!
+            properties: workflow.properties
           });
 
           // Brief delay to prevent recursive updates
@@ -226,6 +217,16 @@ export default function CreateWorkflow() {
       // API call (create or update)
       const savedWorkflow = await submitWorkflow(workflowData);
 
+      // Backend now returns configuration with backend IDs - update local state
+      if (savedWorkflow.configuration) {
+        setWorkflowConfig({
+          nodes: savedWorkflow.configuration.nodes,
+          edges: savedWorkflow.configuration.edges,
+          metadata: savedWorkflow.configuration.metadata,
+          properties: savedWorkflow.properties || workflowConfig.properties
+        });
+      }
+
       // Reset unsaved changes flag after successful save
       setHasUnsavedChanges(false);
 
@@ -277,18 +278,13 @@ export default function CreateWorkflow() {
       console.warn('Executing with unsaved changes - using last saved configuration');
     }
 
-    // Extract database ID from nodeData - this is the integer ID from backend
-    const dbNodeId = nodeData?.dbId;
-
-    if (!dbNodeId) {
-      showToast('Node database ID not found. Please save the workflow first.', 'error');
-      return;
-    }
+    // Extract backend ID from nodeData (nodeId from React Flow is a string)
+    const backendNodeId = nodeData?.backendId || nodeId;
 
     console.log('DEBUG: Executing node with:', {
       workflowId,
       nodeId,
-      dbNodeId,
+      backendNodeId,
       nodeData
     });
 
@@ -301,8 +297,8 @@ export default function CreateWorkflow() {
     });
 
     try {
-      // Start async execution
-      const { execution_id } = await api.executeWorkflow(Number(workflowId), Number(dbNodeId));
+      // Start async execution using backend ID
+      const { execution_id } = await api.executeWorkflow(Number(workflowId), Number(backendNodeId));
 
       console.log('[CreateWorkflow] Execution started:', execution_id);
 

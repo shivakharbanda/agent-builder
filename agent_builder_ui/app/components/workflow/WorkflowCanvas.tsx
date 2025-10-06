@@ -136,18 +136,34 @@ function AgentNode({ data, selected }: { data: any; selected: boolean }) {
         <div className="mt-2 text-xs text-green-400">✓ Agent Selected</div>
       )}
 
-      {/* Input Handle */}
+      {/* Data Input Handle - Top Left (Blue) */}
       <Handle
         type="target"
         position={Position.Left}
-        className="w-3 h-3 bg-[#1173d4] border-2 border-[#1a2633]"
+        id="data-input"
+        className="w-4 h-4 bg-[#1173d4] border-2 border-white"
+        style={{ top: '35%' }}
       />
-      {/* Output Handle */}
+
+      {/* Context Input Handle - Bottom Left (Orange) */}
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="context-input"
+        className="w-4 h-4 bg-[#f59e0b] border-2 border-white"
+        style={{ top: '65%' }}
+      />
+
+      {/* Output Handle - Right */}
       <Handle
         type="source"
         position={Position.Right}
         className="w-3 h-3 bg-[#1173d4] border-2 border-[#1a2633]"
       />
+
+      {/* Handle Labels */}
+      <div className="absolute left-[-50px] top-[33%] text-[10px] text-gray-400">data</div>
+      <div className="absolute left-[-60px] top-[63%] text-[10px] text-amber-400">context</div>
     </div>
   );
 }
@@ -493,12 +509,12 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExe
       // Edit mode: Load existing nodes
       const reactFlowNodes: Node[] = initialConfig.nodes.map((node, index) => {
         const reactFlowNode: Node = {
-          id: node.id,
+          id: String(node.id),  // Convert backend integer ID to string for React Flow
           type: node.type,
           position: node.position || { x: 100 + index * 200, y: 100 },
           data: {
-            id: node.id,
-            dbId: node.dbId, // Backend database ID from workflow.nodes[]
+            id: String(node.id),  // React Flow ID (string)
+            backendId: node.id,    // Keep original backend ID (integer) for API calls
             label: node.config?.name || `${node.type.charAt(0).toUpperCase()}${node.type.slice(1)} Node`,
             config: node.config,
             onConfig: handleNodeConfig,
@@ -510,14 +526,22 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExe
         return reactFlowNode;
       });
 
-      const reactFlowEdges: Edge[] = initialConfig.edges.map(edge => ({
-        id: `${edge.source}-${edge.target}`,
-        source: edge.source,
-        target: edge.target,
-        type: 'smoothstep',
-        animated: true,
-        style: { stroke: '#1173d4', strokeWidth: 2 }
-      }));
+      const reactFlowEdges: Edge[] = initialConfig.edges.map(edge => {
+        // Color-code edge based on target handle type
+        const isContextInput = edge.targetHandle === 'context-input';
+        const edgeColor = isContextInput ? '#f59e0b' : '#1173d4';  // Orange for context, blue for data
+
+        return {
+          id: `${edge.source}-${edge.target}`,
+          source: String(edge.source),  // Convert to string for React Flow
+          target: String(edge.target),  // Convert to string for React Flow
+          targetHandle: edge.targetHandle,
+          sourceHandle: edge.sourceHandle,
+          type: 'smoothstep',
+          animated: true,
+          style: { stroke: edgeColor, strokeWidth: 2 }
+        };
+      });
 
       setNodes(reactFlowNodes);
       setEdges(reactFlowEdges);
@@ -537,15 +561,20 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExe
     // Create config directly from React Flow state without updating local state
     const currentConfig: WorkflowConfig = {
       nodes: nodes.map((node) => ({
-        id: node.id,
+        // Convert React Flow string ID back to integer for backend
+        // Use backendId if available, otherwise parse the string ID
+        id: node.data?.backendId || (isNaN(Number(node.id)) ? node.id : Number(node.id)),
         type: node.type || 'default',
         position: node.position,
         config: node.data?.config || {}
       })),
       edges: edges.map((edge) => ({
         id: edge.id,
-        source: edge.source,
-        target: edge.target
+        // Convert string IDs back to integers for backend
+        source: isNaN(Number(edge.source)) ? edge.source : Number(edge.source),
+        target: isNaN(Number(edge.target)) ? edge.target : Number(edge.target),
+        targetHandle: edge.targetHandle,
+        sourceHandle: edge.sourceHandle
       })),
       properties: workflowConfig.properties,
       metadata: {
@@ -675,12 +704,16 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExe
   // Connect nodes
   const onConnect = useCallback(
     (params: any) => {
+      // Color-code edge based on target handle type
+      const isContextInput = params.targetHandle === 'context-input';
+      const edgeColor = isContextInput ? '#f59e0b' : '#1173d4';  // Orange for context, blue for data
+
       const newEdge = {
         ...params,
         id: `${params.source}-${params.target}-${Date.now()}`,
         type: 'smoothstep',
         animated: true,
-        style: { stroke: '#1173d4', strokeWidth: 2 },
+        style: { stroke: edgeColor, strokeWidth: 2 },
       };
       setEdges((eds) => addEdge(newEdge, eds));
     },
@@ -799,6 +832,7 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExe
         onDrop={onDrop}
         onNodeDoubleClick={onNodeDoubleClick}
         nodeTypes={nodeTypes}
+        connectionMode="loose"
         className="bg-[#111a22]"
         connectionLineStyle={{ stroke: '#1173d4', strokeWidth: 2 }}
         defaultEdgeOptions={{

@@ -81,18 +81,34 @@ function AgentNode({ data, selected }: { data: any; selected: boolean }) {
         <div className="mt-2 text-xs text-green-400">✓ Agent Selected</div>
       )}
 
-      {/* Input Handle */}
+      {/* Data Input Handle - Top Left (Blue) */}
       <Handle
         type="target"
         position={Position.Left}
-        className="w-3 h-3 bg-[#1173d4] border-2 border-[#1a2633]"
+        id="data-input"
+        className="w-4 h-4 bg-[#1173d4] border-2 border-white"
+        style={{ top: '35%' }}
       />
-      {/* Output Handle */}
+
+      {/* Context Input Handle - Bottom Left (Orange) */}
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="context-input"
+        className="w-4 h-4 bg-[#f59e0b] border-2 border-white"
+        style={{ top: '65%' }}
+      />
+
+      {/* Output Handle - Right */}
       <Handle
         type="source"
         position={Position.Right}
         className="w-3 h-3 bg-[#1173d4] border-2 border-[#1a2633]"
       />
+
+      {/* Handle Labels */}
+      <div className="absolute left-[-50px] top-[33%] text-[10px] text-gray-400">data</div>
+      <div className="absolute left-[-60px] top-[63%] text-[10px] text-amber-400">context</div>
     </div>
   );
 }
@@ -167,7 +183,9 @@ export function WorkflowCanvasSimple({ onConfigChange }: WorkflowCanvasProps) {
       edges: edges.map((edge: any) => ({
         id: edge.id,
         source: edge.source,
-        target: edge.target
+        target: edge.target,
+        targetHandle: edge.targetHandle,
+        sourceHandle: edge.sourceHandle
       })),
       metadata: {
         ...prev.metadata,
@@ -203,12 +221,16 @@ export function WorkflowCanvasSimple({ onConfigChange }: WorkflowCanvasProps) {
   // Connect nodes
   const onConnect = useCallback(
     (params: any) => {
+      // Color-code edge based on target handle type
+      const isContextInput = params.targetHandle === 'context-input';
+      const edgeColor = isContextInput ? '#f59e0b' : '#1173d4';  // Orange for context, blue for data
+
       const newEdge = {
         ...params,
         id: `${params.source}-${params.target}-${Date.now()}`,
         type: 'smoothstep',
         animated: true,
-        style: { stroke: '#1173d4', strokeWidth: 2 },
+        style: { stroke: edgeColor, strokeWidth: 2 },
       };
       setEdges((eds: any) => addEdge(newEdge, eds));
     },
@@ -291,6 +313,7 @@ export function WorkflowCanvasSimple({ onConfigChange }: WorkflowCanvasProps) {
       onDragOver={onDragOver}
       onDrop={onDrop}
       nodeTypes={nodeTypes}
+      connectionMode="loose"
       className="bg-[#111a22]"
       connectionLineStyle={{ stroke: '#1173d4', strokeWidth: 2 }}
       defaultEdgeOptions={{
