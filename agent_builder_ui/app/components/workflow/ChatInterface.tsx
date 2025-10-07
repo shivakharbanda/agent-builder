@@ -20,6 +20,7 @@ export function ChatInterface({ onCommand, onWorkflowConfigComplete, projectId =
   const { session, createSession, sendMessage: sendWorkflowMessage, checkFinalization } = useWorkflowBuilder();
   const [inputValue, setInputValue] = useState('');
   const prevCompleteState = useRef(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Auto-trigger completion when finalization happens
   useEffect(() => {
@@ -68,6 +69,11 @@ export function ChatInterface({ onCommand, onWorkflowConfigComplete, projectId =
     initializeChat();
   }, []);
 
+  // Auto-scroll to bottom when messages change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [session.messages, session.isLoading]);
+
   const handleSend = async () => {
     if (!session.sessionId || session.isLoading || !inputValue.trim()) return;
 
@@ -94,8 +100,8 @@ export function ChatInterface({ onCommand, onWorkflowConfigComplete, projectId =
   };
 
   return (
-    <div className="border-t border-[#374151] p-4 flex flex-col">
-      <div className="flex-grow space-y-4 mb-4 h-48 overflow-y-auto">
+    <div className="flex-grow flex flex-col p-4">
+      <div className="flex-grow space-y-4 mb-4 overflow-y-auto">
         {session.messages.length === 0 && !session.isLoading && (
           <div className="text-center py-4">
             <span className="material-symbols-outlined text-3xl text-gray-500 mb-2 block">smart_toy</span>
@@ -138,10 +144,11 @@ export function ChatInterface({ onCommand, onWorkflowConfigComplete, projectId =
             </div>
           </div>
         )}
+        <div ref={messagesEndRef} />
       </div>
 
       {session.isComplete && session.finalConfig && (
-        <div className="mb-2 p-2 bg-green-500/10 border border-green-500/20 rounded-md">
+        <div className="mb-2 p-2 bg-green-500/10 border border-green-500/20 rounded-md flex-shrink-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="material-symbols-outlined text-green-400 text-sm">check_circle</span>
@@ -151,7 +158,7 @@ export function ChatInterface({ onCommand, onWorkflowConfigComplete, projectId =
         </div>
       )}
 
-      <div className="relative">
+      <div className="relative flex-shrink-0">
         <Input
           type="text"
           placeholder={session.isLoading ? "Thinking..." : "Describe your workflow..."}

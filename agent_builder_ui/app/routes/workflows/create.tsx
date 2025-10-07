@@ -32,6 +32,7 @@ export default function CreateWorkflow() {
   const isEditMode = Boolean(params.id);
   const projectId = params.projectId ? parseInt(params.projectId) : undefined;
   const [searchValue, setSearchValue] = useState('');
+  const [activeTab, setActiveTab] = useState<'manual' | 'chat'>('manual');
   const [workflowName, setWorkflowName] = useState('Untitled Workflow');
   const [workflowDescription, setWorkflowDescription] = useState('');
   const [workflowConfig, setWorkflowConfig] = useState<WorkflowConfig>({
@@ -164,6 +165,9 @@ export default function CreateWorkflow() {
 
     // Force canvas remount to initialize with AI config
     setCanvasKey(prev => prev + 1);
+
+    // Auto-switch to Manual tab to show the created workflow
+    setActiveTab('manual');
 
     showToast('✨ Workflow structure created! Configure node details and save.', 'success');
   };
@@ -431,33 +435,68 @@ export default function CreateWorkflow() {
         <div className="flex-grow flex overflow-hidden relative">
           {/* Sidebar */}
           <aside className="w-80 sm:w-96 flex flex-col border-r border-[#374151] bg-[#1a2633] z-10">
-            {/* Search */}
-            <div className="p-4 border-b border-[#374151]">
-              <div className="relative">
-                <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
-                  search
-                </span>
-                <Input
-                  type="text"
-                  placeholder="Search nodes..."
-                  value={searchValue}
-                  onChange={(e) => setSearchValue(e.target.value)}
-                  className="w-full bg-[#111a22] border border-[#374151] rounded-md pl-10 pr-4 py-2 focus:ring-[#1173d4] focus:border-[#1173d4] text-sm text-white"
-                />
+            {/* Tab Switcher */}
+            <div className="border-b border-[#374151]">
+              <div className="flex">
+                <button
+                  onClick={() => setActiveTab('manual')}
+                  className={`flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+                    activeTab === 'manual'
+                      ? 'bg-[#111a22] text-[#1173d4] border-b-2 border-[#1173d4]'
+                      : 'text-gray-400 hover:text-white hover:bg-[#111a22]/50'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-base">widgets</span>
+                  Manual
+                </button>
+                <button
+                  onClick={() => setActiveTab('chat')}
+                  className={`flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+                    activeTab === 'chat'
+                      ? 'bg-[#111a22] text-[#1173d4] border-b-2 border-[#1173d4]'
+                      : 'text-gray-400 hover:text-white hover:bg-[#111a22]/50'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-base">smart_toy</span>
+                  AI Chat
+                </button>
               </div>
             </div>
 
-            {/* Node Palette */}
-            <div className="flex-grow overflow-y-auto p-4">
-              <NodePalette />
-            </div>
+            {/* Tab Content */}
+            {activeTab === 'manual' ? (
+              <>
+                {/* Search */}
+                <div className="p-4 border-b border-[#374151]">
+                  <div className="relative">
+                    <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
+                      search
+                    </span>
+                    <Input
+                      type="text"
+                      placeholder="Search nodes..."
+                      value={searchValue}
+                      onChange={(e) => setSearchValue(e.target.value)}
+                      className="w-full bg-[#111a22] border border-[#374151] rounded-md pl-10 pr-4 py-2 focus:ring-[#1173d4] focus:border-[#1173d4] text-sm text-white"
+                    />
+                  </div>
+                </div>
 
-            {/* Chat Interface */}
-            <ChatInterface
-              onCommand={handleChatCommand}
-              onWorkflowConfigComplete={handleWorkflowConfigComplete}
-              projectId={projectId || 1}
-            />
+                {/* Node Palette */}
+                <div className="flex-grow overflow-y-auto p-4">
+                  <NodePalette />
+                </div>
+              </>
+            ) : (
+              /* Chat Interface - Full Height */
+              <div className="flex-grow flex flex-col overflow-hidden">
+                <ChatInterface
+                  onCommand={handleChatCommand}
+                  onWorkflowConfigComplete={handleWorkflowConfigComplete}
+                  projectId={projectId || 1}
+                />
+              </div>
+            )}
           </aside>
 
           {/* Main Canvas */}

@@ -636,6 +636,86 @@ class AgentBuilderAPI {
     );
     return response.data;
   }
+
+  // MCP Servers API
+  async getMCPServers(): Promise<PaginatedResponse<any>> {
+    const response = await this.client.get('/mcp-servers/');
+    return response.data;
+  }
+
+  async getMCPServer(id: number): Promise<any> {
+    const response = await this.client.get(`/mcp-servers/${id}/`);
+    return response.data;
+  }
+
+  async createMCPServer(data: any): Promise<any> {
+    const response = await this.client.post('/mcp-servers/', data);
+    return response.data;
+  }
+
+  async updateMCPServer(id: number, data: any): Promise<any> {
+    const response = await this.client.patch(`/mcp-servers/${id}/`, data);
+    return response.data;
+  }
+
+  async deleteMCPServer(id: number): Promise<void> {
+    await this.client.delete(`/mcp-servers/${id}/`);
+  }
+
+  async testMCPConnection(url: string): Promise<{
+    healthy: boolean;
+    error: string | null;
+    tools_count?: number;
+  }> {
+    const response = await this.client.post('/mcp-servers/test_connection/', { url });
+    return response.data;
+  }
+
+  async discoverMCPTools(url: string, toolPrefix?: string): Promise<{
+    healthy: boolean;
+    tools: any[];
+    error: string | null;
+  }> {
+    const response = await this.client.post('/mcp-servers/discover_tools/', {
+      url,
+      tool_prefix: toolPrefix || ''
+    });
+    return response.data;
+  }
+
+  async syncMCPSchema(id: number): Promise<{
+    tools_discovered: number;
+    tools_stored: number;
+    server_healthy: boolean;
+    error: string | null;
+  }> {
+    const response = await this.client.post(`/mcp-servers/${id}/sync_schema/`);
+    return response.data;
+  }
+
+  async getMCPServerTools(id: number): Promise<any[]> {
+    const response = await this.client.get(`/mcp-servers/${id}/tools/`);
+    return response.data;
+  }
+
+  async attachMCPServerToAgent(agentId: number, serverId: number): Promise<any> {
+    const response = await this.client.post('/agents/agent-mcp-servers/', {
+      agent: agentId,
+      mcp_server: serverId
+    });
+    return response.data;
+  }
+
+  async detachMCPServerFromAgent(relationshipId: number): Promise<void> {
+    await this.client.delete(`/agents/agent-mcp-servers/${relationshipId}/`);
+  }
+
+  async getAgentMCPServers(agentId: number): Promise<any[]> {
+    const response = await this.client.get('/agents/agent-mcp-servers/', {
+      params: { agent: agentId }
+    });
+    return response.data;
+  }
 }
 
 // Create and export a singleton instance

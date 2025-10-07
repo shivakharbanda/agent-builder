@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.db import transaction
-from .models import Agent, Prompt, Tool, AgentTool
+from .models import Agent, Prompt, Tool, AgentTool, MCPServer, MCPToolDefinition, AgentMCPServer
 
 
 class PromptSerializer(serializers.ModelSerializer):
@@ -237,3 +237,78 @@ class AgentTestResponseSerializer(serializers.Serializer):
         required=False,
         default=list
     )
+
+
+# ============================================================================
+# MCP (Model Context Protocol) Serializers
+# ============================================================================
+
+class MCPToolDefinitionSerializer(serializers.ModelSerializer):
+    """Serializer for MCP tool definitions"""
+    class Meta:
+        model = MCPToolDefinition
+        fields = [
+            'id', 'name', 'prefixed_name', 'title', 'description',
+            'input_schema', 'output_schema', 'capabilities_tags',
+            'required_inputs', 'created_at'
+        ]
+        read_only_fields = ['id', 'created_at']
+
+
+class MCPServerSerializer(serializers.ModelSerializer):
+    """Serializer for MCP servers with tool definitions"""
+    tools = MCPToolDefinitionSerializer(many=True, read_only=True)
+    tools_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = MCPServer
+        fields = [
+            'id', 'name', 'description', 'url', 'transport', 'tool_prefix',
+            'is_healthy', 'last_schema_sync', 'tools_count', 'tools',
+            'created_at', 'updated_at', 'created_by', 'is_active'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at', 'created_by', 'is_healthy', 'last_schema_sync']
+
+    def get_tools_count(self, obj):
+        return obj.tools.count()
+
+    def create(self, validated_data):
+        validated_data['created_by'] = self.context['request'].user
+        return super().create(validated_data)
+
+
+class MCPServerListSerializer(serializers.ModelSerializer):
+    """Lightweight serializer for MCP server lists"""
+    tools_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = MCPServer
+        fields = [
+            'id', 'name', 'description', 'url', 'transport', 'tool_prefix',
+            'is_healthy', 'last_schema_sync', 'tools_count', 'created_at', 'is_active'
+        ]
+
+    def get_tools_count(self, obj):
+        return obj.tools.count()
+
+
+class AgentMCPServerSerializer(serializers.ModelSerializer):
+    """Serializer for agent-MCP server relationships"""
+    server_name = serializers.CharField(source='mcp_server.name', read_only=True)
+    server_url = serializers.CharField(source='mcp_server.url', read_only=True)
+    tools_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AgentMCPServer
+        fields = [
+            'id', 'agent', 'mcp_server', 'server_name', 'server_url',
+            'custom_tool_prefix', 'tools_count', 'created_at', 'is_active'
+        ]
+        read_only_fields = ['id', 'created_at', 'server_name', 'server_url', 'tools_count']
+
+    def get_tools_count(self, obj):
+        return obj.mcp_server.tools.count()
+
+    def create(self, validated_data):
+        validated_data['created_by'] = self.context['request'].user
+        return super().create(validated_data)

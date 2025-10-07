@@ -16,8 +16,9 @@ from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
 from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.mcp import MCPServerSSE
 
-from agents.models import Agent, Prompt
+from agents.models import Agent, Prompt, AgentMCPServer
 from credentials.models import Credential
 
 
@@ -45,6 +46,45 @@ class AgentExecutor:
         """
         self.agent = Agent.objects.select_related('project').get(id=agent_id, is_active=True)
         self.prompts = list(Prompt.objects.filter(agent=self.agent, is_active=True))
+
+    def _load_mcp_toolsets(self) -> List:
+        """
+        Load MCP server connections for this agent.
+
+        Returns:
+            List of MCP client instances (MCPServerSSE, etc.)
+        """
+        toolsets = []
+
+        # Get all MCP servers attached to this agent
+        agent_mcp_servers = AgentMCPServer.objects.filter(
+            agent=self.agent,
+            is_active=True
+        ).select_related('mcp_server')
+
+        for agent_mcp_server in agent_mcp_servers:
+            server = agent_mcp_server.mcp_server
+
+            # Skip unhealthy servers
+            if not server.is_healthy:
+                print(f"[AGENT EXECUTOR] Skipping unhealthy MCP server: {server.name}")
+                continue
+
+            # Create appropriate client based on transport
+            try:
+                if server.transport == 'sse':
+                    mcp_client = MCPServerSSE(
+                        server.url,
+                        tool_prefix=server.tool_prefix or None
+                    )
+                    toolsets.append(mcp_client)
+                    print(f"[AGENT EXECUTOR] Loaded MCP server: {server.name} ({server.url})")
+                # Future: Add other transports (stdio, http)
+            except Exception as e:
+                print(f"[AGENT EXECUTOR] Failed to create MCP client for {server.name}: {e}")
+                continue
+
+        return toolsets
 
     def _get_llm_model(self, credential_id: int, model: str = None):
         """
@@ -195,11 +235,15 @@ class AgentExecutor:
                 description=self.agent.description or f"Output schema for {self.agent.name}"
             )
 
+            # Load MCP toolsets
+            toolsets = self._load_mcp_toolsets()
+
             # Create PydanticAI agent
             pydantic_agent = PydanticAgent(
                 model=llm_model,
                 output_type=output_type,
-                system_prompt=system_prompt
+                system_prompt=system_prompt,
+                toolsets=toolsets
             )
 
             # Execute agent
@@ -267,10 +311,14 @@ class AgentExecutor:
             if not system_prompt:
                 system_prompt = f"You are a helpful AI assistant named {self.agent.name}."
 
+            # Load MCP toolsets
+            toolsets = self._load_mcp_toolsets()
+
             # Create PydanticAI agent (no output_type for unstructured)
             pydantic_agent = PydanticAgent(
                 model=llm_model,
-                system_prompt=system_prompt
+                system_prompt=system_prompt,
+                toolsets=toolsets
             )
 
             # Build message history for PydanticAI

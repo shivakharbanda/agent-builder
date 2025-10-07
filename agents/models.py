@@ -72,3 +72,77 @@ class AgentTool(BaseModel):
     class Meta:
         db_table = 'agents_agent_tool'
         unique_together = ['agent', 'tool']
+
+
+class MCPServer(BaseModel):
+    """MCP (Model Context Protocol) server registry"""
+    TRANSPORT_CHOICES = [
+        ('sse', 'Server-Sent Events'),
+        ('stdio', 'Standard I/O'),
+        ('http', 'Streamable HTTP'),
+    ]
+
+    name = models.CharField(max_length=200, help_text="Friendly name (e.g., 'Crawl4AI Production')")
+    description = models.TextField(blank=True, help_text="What this server provides")
+    url = models.URLField(help_text="MCP endpoint URL (e.g., https://crawl4ai.../mcp/sse)")
+    transport = models.CharField(max_length=20, choices=TRANSPORT_CHOICES, default='sse')
+    tool_prefix = models.CharField(max_length=50, blank=True, help_text="Prefix for tool names (e.g., 'c4ai')")
+
+    # Connection health
+    is_healthy = models.BooleanField(default=True)
+    last_schema_sync = models.DateTimeField(null=True, blank=True)
+
+    # Optional auth (for future)
+    auth_config = models.JSONField(default=dict, blank=True)
+
+    def __str__(self):
+        return self.name
+
+    class Meta:
+        db_table = 'agents_mcp_server'
+        ordering = ['name']
+
+
+class MCPToolDefinition(BaseModel):
+    """Tool definitions discovered from MCP servers"""
+    server = models.ForeignKey(MCPServer, on_delete=models.CASCADE, related_name='tools')
+
+    # Standard MCP schema fields
+    name = models.CharField(max_length=200, help_text="Tool name from MCP server (e.g., 'md')")
+    prefixed_name = models.CharField(max_length=200, help_text="With prefix (e.g., 'c4ai_md')")
+    title = models.CharField(max_length=200, blank=True)
+    description = models.TextField(blank=True)
+
+    # JSON schemas
+    input_schema = models.JSONField(default=dict, help_text="Tool input schema (from MCP)")
+    output_schema = models.JSONField(default=dict, null=True, blank=True)
+    annotations = models.JSONField(default=dict, null=True, blank=True)
+    meta = models.JSONField(default=dict, null=True, blank=True)
+
+    # For AI-assisted workflow building
+    capabilities_tags = models.JSONField(default=list, blank=True, help_text="Auto-extracted capabilities")
+    required_inputs = models.JSONField(default=list, blank=True, help_text="Required input fields")
+
+    def __str__(self):
+        return f"{self.server.name} - {self.prefixed_name}"
+
+    class Meta:
+        db_table = 'agents_mcp_tool_definition'
+        ordering = ['server', 'name']
+        unique_together = [['server', 'name']]
+
+
+class AgentMCPServer(BaseModel):
+    """Link agents to MCP servers (many-to-many)"""
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name='mcp_servers')
+    mcp_server = models.ForeignKey(MCPServer, on_delete=models.CASCADE, related_name='agents')
+
+    # Optional per-agent overrides
+    custom_tool_prefix = models.CharField(max_length=50, blank=True)
+
+    def __str__(self):
+        return f"{self.agent.name} - {self.mcp_server.name}"
+
+    class Meta:
+        db_table = 'agents_agent_mcp_server'
+        unique_together = [['agent', 'mcp_server']]
