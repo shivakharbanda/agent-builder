@@ -388,6 +388,7 @@ export interface AgentTestRequest {
   inputs?: Record<string, any>;  // For structured tests
   message?: string;  // For unstructured tests
   conversation_history?: ConversationMessage[];  // For unstructured tests
+  mcp_server_ids?: number[];  // Optional MCP server IDs for ad-hoc attachment
 }
 
 export interface AgentTestResponse {

@@ -8,6 +8,7 @@ Loads agent configuration from database and executes with provided inputs.
 import os
 import re
 import time
+import traceback
 from typing import Any, Dict, Optional, List
 from datetime import datetime
 
@@ -16,9 +17,9 @@ from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
 from pydantic_ai.providers.openai import OpenAIProvider
-from pydantic_ai.mcp import MCPServerSSE
+from pydantic_ai.mcp import MCPServerSSE, MCPServerStreamableHTTP
 
-from agents.models import Agent, Prompt, AgentMCPServer
+from agents.models import Agent, Prompt, AgentMCPServer, MCPServer
 from credentials.models import Credential
 
 
@@ -47,42 +48,94 @@ class AgentExecutor:
         self.agent = Agent.objects.select_related('project').get(id=agent_id, is_active=True)
         self.prompts = list(Prompt.objects.filter(agent=self.agent, is_active=True))
 
-    def _load_mcp_toolsets(self) -> List:
+    def _load_mcp_toolsets(self, server_ids: Optional[List[int]] = None) -> List:
         """
-        Load MCP server connections for this agent.
+        Load MCP server connections.
+
+        Args:
+            server_ids: Optional list of specific server IDs (ad-hoc mode).
+                       If None, loads from agent's permanent attachments.
 
         Returns:
-            List of MCP client instances (MCPServerSSE, etc.)
+            List of MCP client instances (MCPServerSSE, MCPServerHTTP, etc.)
         """
         toolsets = []
 
-        # Get all MCP servers attached to this agent
-        agent_mcp_servers = AgentMCPServer.objects.filter(
-            agent=self.agent,
-            is_active=True
-        ).select_related('mcp_server')
+        if server_ids is not None:
+            # Ad-hoc mode: Load specific servers by ID
+            servers = MCPServer.objects.filter(
+                id__in=server_ids,
+                is_active=True
+            )
+            print(f"\n{'='*80}")
+            print(f"[AGENT EXECUTOR] Loading {len(server_ids)} ad-hoc MCP servers (requested IDs: {server_ids})")
+            print(f"[AGENT EXECUTOR] Found {len(servers)} active servers in database")
+        else:
+            # Existing mode: Load from agent relationships
+            agent_mcp_servers = AgentMCPServer.objects.filter(
+                agent=self.agent,
+                is_active=True
+            ).select_related('mcp_server')
+            servers = [ams.mcp_server for ams in agent_mcp_servers]
+            print(f"\n{'='*80}")
+            print(f"[AGENT EXECUTOR] Loading {len(servers)} permanent MCP servers from agent")
 
-        for agent_mcp_server in agent_mcp_servers:
-            server = agent_mcp_server.mcp_server
+        # Process each server
+        for idx, server in enumerate(servers, 1):
+            print(f"\n[AGENT EXECUTOR] Processing server {idx}/{len(servers)}: {server.name}")
+            print(f"[AGENT EXECUTOR]   - URL: {server.url}")
+            print(f"[AGENT EXECUTOR]   - Transport: {server.transport}")
+            print(f"[AGENT EXECUTOR]   - Tool Prefix: {server.tool_prefix or 'None'}")
+            print(f"[AGENT EXECUTOR]   - Healthy: {server.is_healthy}")
 
             # Skip unhealthy servers
             if not server.is_healthy:
-                print(f"[AGENT EXECUTOR] Skipping unhealthy MCP server: {server.name}")
+                print(f"[AGENT EXECUTOR]   ⚠️  SKIPPED: Server marked as unhealthy")
                 continue
 
             # Create appropriate client based on transport
             try:
-                if server.transport == 'sse':
-                    mcp_client = MCPServerSSE(
+                if server.transport == 'http':
+                    print(f"[AGENT EXECUTOR]   → Creating Streamable HTTP MCP client...")
+                    mcp_client = MCPServerStreamableHTTP(
                         server.url,
-                        tool_prefix=server.tool_prefix or None
+                        tool_prefix=server.tool_prefix or None,
+                        timeout=60  # 1 minute timeout for cold starts
                     )
                     toolsets.append(mcp_client)
-                    print(f"[AGENT EXECUTOR] Loaded MCP server: {server.name} ({server.url})")
-                # Future: Add other transports (stdio, http)
+                    print(f"[AGENT EXECUTOR]   ✅ Successfully loaded Streamable HTTP MCP server: {server.name}")
+
+                elif server.transport == 'sse':
+                    print(f"[AGENT EXECUTOR]   → Creating SSE MCP client...")
+                    # Append /sse to base URL for SSE connections
+                    sse_url = f"{server.url}/sse"
+                    mcp_client = MCPServerSSE(
+                        sse_url,
+                        tool_prefix=server.tool_prefix or None,
+                        timeout=60  # 1 minute timeout for cold starts
+                    )
+                    toolsets.append(mcp_client)
+                    print(f"[AGENT EXECUTOR]   ✅ Successfully loaded SSE MCP server: {server.name}")
+
+                elif server.transport == 'stdio':
+                    print(f"[AGENT EXECUTOR]   ⚠️  SKIPPED: STDIO transport not yet implemented")
+                    continue
+
+                else:
+                    print(f"[AGENT EXECUTOR]   ❌ SKIPPED: Unknown transport type '{server.transport}'")
+                    continue
+
             except Exception as e:
-                print(f"[AGENT EXECUTOR] Failed to create MCP client for {server.name}: {e}")
+                print(f"[AGENT EXECUTOR]   ❌ Failed to create MCP client for {server.name}")
+                print(f"[AGENT EXECUTOR]   Error: {type(e).__name__}: {str(e)}")
+                print(f"[AGENT EXECUTOR]   Traceback: {traceback.format_exc()}")
                 continue
+
+        print(f"\n[AGENT EXECUTOR] MCP Loading Summary:")
+        print(f"[AGENT EXECUTOR]   - Total servers processed: {len(servers)}")
+        print(f"[AGENT EXECUTOR]   - Successfully loaded: {len(toolsets)}")
+        print(f"[AGENT EXECUTOR]   - Failed/Skipped: {len(servers) - len(toolsets)}")
+        print(f"{'='*80}\n")
 
         return toolsets
 
@@ -173,7 +226,8 @@ class AgentExecutor:
         self,
         placeholder_values: Dict[str, Any],
         credential_id: int,
-        model: str = None
+        model: str = None,
+        mcp_server_ids: Optional[List[int]] = None
     ) -> Dict[str, Any]:
         """
         Execute structured agent (returns JSON according to schema).
@@ -182,6 +236,7 @@ class AgentExecutor:
             placeholder_values: Values for prompt placeholders
             credential_id: ID of LLM credential to use
             model: Optional model name override
+            mcp_server_ids: Optional list of MCP server IDs to attach ad-hoc
 
         Returns:
             Dict containing:
@@ -236,7 +291,7 @@ class AgentExecutor:
             )
 
             # Load MCP toolsets
-            toolsets = self._load_mcp_toolsets()
+            toolsets = self._load_mcp_toolsets(mcp_server_ids)
 
             # Create PydanticAI agent
             pydantic_agent = PydanticAgent(
@@ -259,11 +314,24 @@ class AgentExecutor:
 
         except Exception as e:
             execution_time_ms = int((time.time() - start_time) * 1000)
+            error_details = str(e)
+
+            # Log full traceback for debugging
+            print(f"[AGENT EXECUTOR ERROR] Full traceback:")
+            print(traceback.format_exc())
+
+            # Check if it's a TaskGroup error and try to extract nested exception
+            if hasattr(e, '__cause__'):
+                error_details = f"{error_details} | Cause: {str(e.__cause__)}"
+            if hasattr(e, 'exceptions'):
+                nested_errors = [str(ex) for ex in e.exceptions]
+                error_details = f"{error_details} | Nested: {', '.join(nested_errors)}"
+
             return {
                 'success': False,
                 'output': None,
                 'execution_time_ms': execution_time_ms,
-                'error': str(e)
+                'error': error_details
             }
 
     def execute_unstructured(
@@ -271,7 +339,8 @@ class AgentExecutor:
         message: str,
         credential_id: int,
         conversation_history: Optional[List[Dict[str, str]]] = None,
-        model: str = None
+        model: str = None,
+        mcp_server_ids: Optional[List[int]] = None
     ) -> Dict[str, Any]:
         """
         Execute unstructured agent (conversational, returns text).
@@ -282,6 +351,7 @@ class AgentExecutor:
             conversation_history: List of previous messages (optional)
                 Format: [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]
             model: Optional model name override
+            mcp_server_ids: Optional list of MCP server IDs to attach ad-hoc
 
         Returns:
             Dict containing:
@@ -312,7 +382,7 @@ class AgentExecutor:
                 system_prompt = f"You are a helpful AI assistant named {self.agent.name}."
 
             # Load MCP toolsets
-            toolsets = self._load_mcp_toolsets()
+            toolsets = self._load_mcp_toolsets(mcp_server_ids)
 
             # Create PydanticAI agent (no output_type for unstructured)
             pydantic_agent = PydanticAgent(
@@ -353,12 +423,25 @@ class AgentExecutor:
 
         except Exception as e:
             execution_time_ms = int((time.time() - start_time) * 1000)
+            error_details = str(e)
+
+            # Log full traceback for debugging
+            print(f"[AGENT EXECUTOR ERROR] Full traceback:")
+            print(traceback.format_exc())
+
+            # Check if it's a TaskGroup error and try to extract nested exception
+            if hasattr(e, '__cause__'):
+                error_details = f"{error_details} | Cause: {str(e.__cause__)}"
+            if hasattr(e, 'exceptions'):
+                nested_errors = [str(ex) for ex in e.exceptions]
+                error_details = f"{error_details} | Nested: {', '.join(nested_errors)}"
+
             return {
                 'success': False,
                 'response': None,
                 'conversation_history': conversation_history or [],
                 'execution_time_ms': execution_time_ms,
-                'error': str(e)
+                'error': error_details
             }
 
     def get_placeholders(self) -> List[str]:

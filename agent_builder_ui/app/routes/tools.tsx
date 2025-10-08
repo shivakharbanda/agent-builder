@@ -27,6 +27,7 @@ export default function Tools() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState('all');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [editingServer, setEditingServer] = useState<MCPServer | null>(null);
   const [selectedServer, setSelectedServer] = useState<MCPServer | null>(null);
   const [showToolsModal, setShowToolsModal] = useState(false);
   const [mcpTools, setMcpTools] = useState<any[]>([]);
@@ -75,6 +76,11 @@ export default function Tools() {
     } catch (error) {
       showToast('Failed to load tools', 'error');
     }
+  };
+
+  const handleEditMcp = (server: MCPServer) => {
+    setEditingServer(server);
+    setShowAddModal(true);
   };
 
   const handleDeleteMcp = async (id: number) => {
@@ -187,6 +193,7 @@ export default function Tools() {
                   key={`mcp-${tool.id}`}
                   server={tool as any}
                   onSync={handleSync}
+                  onEdit={handleEditMcp}
                   onViewTools={handleViewTools}
                   onDelete={handleDeleteMcp}
                 />
@@ -201,11 +208,16 @@ export default function Tools() {
       {/* Add MCP Server Modal */}
       {showAddModal && (
         <AddMCPServerModal
-          onClose={() => setShowAddModal(false)}
+          server={editingServer}
+          onClose={() => {
+            setShowAddModal(false);
+            setEditingServer(null);
+          }}
           onSuccess={() => {
             setShowAddModal(false);
+            setEditingServer(null);
             loadMcpServers();
-            showToast('MCP server registered successfully', 'success');
+            showToast(editingServer ? 'MCP server updated successfully' : 'MCP server registered successfully', 'success');
           }}
           showToast={showToast}
         />
@@ -268,11 +280,13 @@ function InternalToolCard({ tool, getToolIcon }: { tool: any; getToolIcon: (type
 function MCPServerCard({
   server,
   onSync,
+  onEdit,
   onViewTools,
   onDelete
 }: {
   server: MCPServer;
   onSync: (id: number) => void;
+  onEdit: (server: MCPServer) => void;
   onViewTools: (server: MCPServer) => void;
   onDelete: (id: number) => void;
 }) {
@@ -313,6 +327,13 @@ function MCPServerCard({
               <span className="material-symbols-outlined text-base">sync</span>
             </button>
             <button
+              onClick={() => onEdit(server)}
+              className="text-blue-400 hover:text-blue-300"
+              title="Edit"
+            >
+              <span className="material-symbols-outlined text-base">edit</span>
+            </button>
+            <button
               onClick={() => onViewTools(server)}
               className="text-gray-400 hover:text-white"
               title="View tools"
@@ -335,20 +356,23 @@ function MCPServerCard({
 
 // Add MCP Server Modal
 function AddMCPServerModal({
+  server,
   onClose,
   onSuccess,
   showToast
 }: {
+  server?: MCPServer | null;
   onClose: () => void;
   onSuccess: () => void;
   showToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }) {
+  const isEditMode = !!server;
   const [formData, setFormData] = useState<MCPServerCreate>({
-    name: '',
-    description: '',
-    url: '',
-    transport: 'sse',
-    tool_prefix: ''
+    name: server?.name || '',
+    description: server?.description || '',
+    url: server?.url || '',
+    transport: server?.transport || 'sse',
+    tool_prefix: server?.tool_prefix || ''
   });
   const [testing, setTesting] = useState(false);
   const [discovering, setDiscovering] = useState(false);
@@ -430,10 +454,14 @@ function AddMCPServerModal({
     setSaving(true);
 
     try {
-      await api.createMCPServer(formData);
+      if (isEditMode && server) {
+        await api.updateMCPServer(server.id, formData);
+      } else {
+        await api.createMCPServer(formData);
+      }
       onSuccess();
     } catch (error: any) {
-      showToast(error.response?.data?.error || 'Failed to create server', 'error');
+      showToast(error.response?.data?.error || `Failed to ${isEditMode ? 'update' : 'create'} server`, 'error');
     } finally {
       setSaving(false);
     }
@@ -443,7 +471,7 @@ function AddMCPServerModal({
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
       <div className="bg-[#1a2633] rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="flex justify-between items-center mb-6">
-          <h2 className="text-xl font-bold text-white">Register MCP Server</h2>
+          <h2 className="text-xl font-bold text-white">{isEditMode ? 'Edit MCP Server' : 'Register MCP Server'}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-white">
             <span className="material-symbols-outlined">close</span>
           </button>
@@ -482,7 +510,7 @@ function AddMCPServerModal({
                 type="url"
                 value={formData.url}
                 onChange={e => setFormData({ ...formData, url: e.target.value })}
-                placeholder="https://your-server.run.app/mcp/sse"
+                placeholder="http://localhost:3001/mcp"
                 className="flex-1"
                 required
               />
@@ -493,6 +521,9 @@ function AddMCPServerModal({
                 {discovering ? 'Discovering...' : 'Discover'}
               </Button>
             </div>
+            <p className="text-xs text-gray-400 mt-1">
+              Enter the base MCP endpoint. System will append /sse and /schema as needed.
+            </p>
             {testResult && (
               <p className={`text-sm mt-2 ${testResult.healthy ? 'text-green-400' : 'text-red-400'}`}>
                 {testResult.message}
@@ -585,7 +616,7 @@ function AddMCPServerModal({
           <div className="flex justify-end gap-3 pt-4 border-t border-[#374151]">
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
             <Button type="submit" disabled={saving}>
-              {saving ? 'Registering...' : 'Register Server'}
+              {saving ? (isEditMode ? 'Updating...' : 'Registering...') : (isEditMode ? 'Update Server' : 'Register Server')}
             </Button>
           </div>
         </form>

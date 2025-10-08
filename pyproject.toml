@@ -20,6 +20,7 @@ dependencies = [
     "pydantic-ai-slim[google,mcp]>=1.0.11",
     "psycopg2>=2.9.10",
     "dq-db-manager",
+    "mcp>=1.15.0",
 ]
 
 [tool.uv.sources]

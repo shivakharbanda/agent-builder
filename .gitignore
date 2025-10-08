@@ -41,3 +41,7 @@ Thumbs.db
 dq_db_manager
 
 node_modules
+
+mcp-server-test.py
+mcp_fetch_tools.py
+pydantic-mcp-server.py

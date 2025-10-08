@@ -202,6 +202,14 @@ class AgentTestRequestSerializer(serializers.Serializer):
         help_text="Conversation history for unstructured agent"
     )
 
+    # Optional MCP server IDs for ad-hoc attachment
+    mcp_server_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        required=False,
+        allow_empty=True,
+        help_text="Optional list of MCP server IDs to attach for this test"
+    )
+
     def validate(self, data):
         """Validate that required fields are present based on test_type"""
         test_type = data.get('test_type')

@@ -268,7 +268,12 @@ class AgentBuilderAPI {
   }
 
   async testAgent(id: number, data: AgentTestRequest): Promise<AgentTestResponse> {
-    const response = await this.client.post<AgentTestResponse>(`/agents/${id}/test/`, data);
+    // Use extended timeout for MCP server connections (60s) + execution buffer
+    const response = await this.client.post<AgentTestResponse>(
+      `/agents/${id}/test/`,
+      data,
+      { timeout: 90000 }  // 90 seconds
+    );
     return response.data;
   }
 

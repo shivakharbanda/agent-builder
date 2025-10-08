@@ -115,6 +115,7 @@ class TestAgentView(APIView):
         test_type = test_data['test_type']
         credential_id = test_data['credential_id']
         model = test_data.get('model', None)
+        mcp_server_ids = test_data.get('mcp_server_ids', None)
 
         try:
             # Initialize executor
@@ -126,7 +127,8 @@ class TestAgentView(APIView):
                 result = executor.execute_structured(
                     placeholder_values=inputs,
                     credential_id=credential_id,
-                    model=model
+                    model=model,
+                    mcp_server_ids=mcp_server_ids
                 )
 
             else:  # unstructured
@@ -140,7 +142,8 @@ class TestAgentView(APIView):
                     message=message,
                     credential_id=credential_id,
                     conversation_history=conversation_history,
-                    model=model
+                    model=model,
+                    mcp_server_ids=mcp_server_ids
                 )
 
             # Serialize response
@@ -196,12 +199,14 @@ class MCPServerViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        transport = request.data.get('transport', 'http')
+
         try:
-            result = asyncio.run(MCPDiscoveryService.test_connection(url))
+            result = asyncio.run(MCPDiscoveryService.test_connection(url, transport))
             return Response(result)
         except Exception as e:
             return Response(
-                {"healthy": False, "error": str(e)},
+                {"healthy": False, "error": str(e), "tools_count": 0},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -218,9 +223,10 @@ class MCPServerViewSet(viewsets.ModelViewSet):
             )
 
         tool_prefix = request.data.get('tool_prefix', '')
+        transport = request.data.get('transport', 'http')
 
         try:
-            result = asyncio.run(MCPDiscoveryService.discover_tools(url, tool_prefix))
+            result = asyncio.run(MCPDiscoveryService.discover_tools(url, tool_prefix, transport))
             return Response(result)
         except Exception as e:
             return Response(

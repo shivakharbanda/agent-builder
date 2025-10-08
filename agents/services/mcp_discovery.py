@@ -4,11 +4,12 @@ MCP Server Discovery Service
 Connects to MCP servers, fetches tool schemas, and stores them in database.
 """
 
-import httpx
 import asyncio
 from typing import Dict, List
 from django.utils import timezone
 from asgiref.sync import sync_to_async
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
 from agents.models import MCPServer, MCPToolDefinition
 
 
@@ -16,52 +17,73 @@ class MCPDiscoveryService:
     """Service for discovering and syncing MCP server tools"""
 
     @staticmethod
-    async def test_connection(url: str) -> Dict:
+    def _get_mcp_session(url: str, transport: str = 'http'):
         """
-        Test connectivity to MCP server.
+        Create MCP session based on transport type.
 
         Args:
-            url: MCP server SSE endpoint
+            url: MCP server endpoint
+            transport: Transport type ('http', 'sse', 'stdio')
+
+        Returns:
+            Async context manager for MCP session
+
+        Note:
+            Currently only 'http' transport is fully supported for discovery.
+            SSE and stdio transports can be added as needed.
+        """
+        if transport == 'http':
+            return streamablehttp_client(url)
+        elif transport == 'sse':
+            # SSE transport - for now, treat as HTTP
+            # TODO: Implement proper SSE client if needed
+            return streamablehttp_client(url)
+        else:
+            raise ValueError(f"Unsupported transport type: {transport}")
+
+    @staticmethod
+    async def test_connection(url: str, transport: str = 'http') -> Dict:
+        """
+        Test connectivity to MCP server using proper MCP protocol.
+
+        Args:
+            url: MCP server endpoint (e.g., 'http://localhost:8005/mcp')
+            transport: Transport type ('http', 'sse', 'stdio')
 
         Returns:
             {"healthy": bool, "error": str|None, "tools_count": int}
         """
         try:
-            # Extract base URL (remove /sse suffix)
-            base_url = url.rstrip('/').replace('/mcp/sse', '')
-            schema_url = f"{base_url}/mcp/schema"
+            # Get MCP session based on transport
+            async with MCPDiscoveryService._get_mcp_session(url, transport) as (read_stream, write_stream, _):
+                async with ClientSession(read_stream, write_stream) as session:
+                    # Initialize session (handshake)
+                    await session.initialize()
 
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(schema_url)
-                response.raise_for_status()
+                    # List available tools
+                    tools_result = await session.list_tools()
 
-                # Verify it's valid MCP schema
-                schema = response.json()
-                if 'tools' not in schema:
-                    return {"healthy": False, "error": "Invalid MCP schema - missing 'tools'"}
-
-                return {
-                    "healthy": True,
-                    "error": None,
-                    "tools_count": len(schema.get('tools', []))
-                }
-        except httpx.TimeoutException:
-            return {"healthy": False, "error": "Connection timeout"}
-        except httpx.HTTPError as e:
-            return {"healthy": False, "error": f"HTTP error: {str(e)}"}
+                    return {
+                        "healthy": True,
+                        "error": None,
+                        "tools_count": len(tools_result.tools)
+                    }
+        except asyncio.TimeoutError:
+            return {"healthy": False, "error": "Connection timeout", "tools_count": 0}
         except Exception as e:
-            return {"healthy": False, "error": str(e)}
+            return {"healthy": False, "error": str(e), "tools_count": 0}
 
     @staticmethod
-    async def discover_tools(url: str, tool_prefix: str = "") -> Dict:
+    async def discover_tools(url: str, tool_prefix: str = "", transport: str = 'http') -> Dict:
         """
         Discover tools from MCP server without saving to database.
 
         Used for previewing tools before registration.
 
         Args:
-            url: MCP server SSE endpoint
+            url: MCP server endpoint (e.g., 'http://localhost:8005/mcp')
             tool_prefix: Optional prefix for tool names
+            transport: Transport type ('http', 'sse', 'stdio')
 
         Returns:
             {
@@ -71,69 +93,62 @@ class MCPDiscoveryService:
             }
         """
         try:
-            # Extract base URL (remove /sse suffix)
-            base_url = url.rstrip('/').replace('/mcp/sse', '')
-            schema_url = f"{base_url}/mcp/schema"
+            # Get MCP session based on transport
+            async with MCPDiscoveryService._get_mcp_session(url, transport) as (read_stream, write_stream, _):
+                async with ClientSession(read_stream, write_stream) as session:
+                    # Initialize session (handshake)
+                    await session.initialize()
 
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(schema_url)
-                response.raise_for_status()
+                    # List available tools
+                    tools_result = await session.list_tools()
 
-                # Verify it's valid MCP schema
-                schema = response.json()
-                if 'tools' not in schema:
+                    # Parse tools
+                    tools = []
+                    for tool_def in tools_result.tools:
+                        # Build prefixed name
+                        if tool_prefix:
+                            prefixed_name = f"{tool_prefix}_{tool_def.name}"
+                        else:
+                            prefixed_name = tool_def.name
+
+                        # Extract input schema and required inputs
+                        input_schema = tool_def.inputSchema if hasattr(tool_def, 'inputSchema') else {}
+                        if isinstance(input_schema, dict):
+                            required_inputs = input_schema.get('required', [])
+                        else:
+                            # If inputSchema is an object, try to convert to dict
+                            required_inputs = getattr(input_schema, 'required', []) if hasattr(input_schema, 'required') else []
+
+                        # Extract capabilities
+                        description = tool_def.description if hasattr(tool_def, 'description') else ''
+                        capabilities = MCPDiscoveryService._extract_capabilities(description)
+
+                        tools.append({
+                            'name': tool_def.name,
+                            'prefixed_name': prefixed_name,
+                            'title': getattr(tool_def, 'title', ''),
+                            'description': description,
+                            'input_schema': input_schema if isinstance(input_schema, dict) else {},
+                            'output_schema': getattr(tool_def, 'outputSchema', None),
+                            'capabilities_tags': capabilities,
+                            'required_inputs': required_inputs
+                        })
+
                     return {
-                        "healthy": False,
-                        "tools": [],
-                        "error": "Invalid MCP schema - missing 'tools'"
+                        "healthy": True,
+                        "tools": tools,
+                        "error": None
                     }
 
-                # Parse tools
-                tools = []
-                for tool_def in schema.get('tools', []):
-                    # Build prefixed name
-                    if tool_prefix:
-                        prefixed_name = f"{tool_prefix}_{tool_def['name']}"
-                    else:
-                        prefixed_name = tool_def['name']
-
-                    # Extract required inputs
-                    input_schema = tool_def.get('inputSchema', {})
-                    required_inputs = input_schema.get('required', [])
-
-                    # Extract capabilities
-                    capabilities = MCPDiscoveryService._extract_capabilities(
-                        tool_def.get('description', '')
-                    )
-
-                    tools.append({
-                        'name': tool_def['name'],
-                        'prefixed_name': prefixed_name,
-                        'title': tool_def.get('title', ''),
-                        'description': tool_def.get('description', ''),
-                        'input_schema': input_schema,
-                        'output_schema': tool_def.get('outputSchema'),
-                        'capabilities_tags': capabilities,
-                        'required_inputs': required_inputs
-                    })
-
-                return {
-                    "healthy": True,
-                    "tools": tools,
-                    "error": None
-                }
-
-        except httpx.TimeoutException:
+        except asyncio.TimeoutError:
             return {"healthy": False, "tools": [], "error": "Connection timeout"}
-        except httpx.HTTPError as e:
-            return {"healthy": False, "tools": [], "error": f"HTTP error: {str(e)}"}
         except Exception as e:
             return {"healthy": False, "tools": [], "error": str(e)}
 
     @staticmethod
     async def sync_server_schema(server_id: int) -> Dict:
         """
-        Fetch MCP server schema and update tool definitions.
+        Fetch MCP server schema and update tool definitions using MCP protocol.
 
         Args:
             server_id: ID of MCPServer record
@@ -149,64 +164,65 @@ class MCPDiscoveryService:
         try:
             server = await sync_to_async(MCPServer.objects.get)(id=server_id)
 
-            # Extract base URL
-            base_url = server.url.rstrip('/').replace('/mcp/sse', '')
-            schema_url = f"{base_url}/mcp/schema"
+            # Get MCP session based on server's transport type
+            async with MCPDiscoveryService._get_mcp_session(server.url, server.transport) as (read_stream, write_stream, _):
+                async with ClientSession(read_stream, write_stream) as session:
+                    # Initialize session (handshake)
+                    await session.initialize()
 
-            # Fetch schema
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                response = await client.get(schema_url)
-                response.raise_for_status()
-                schema = response.json()
+                    # List available tools
+                    tools_result = await session.list_tools()
 
-            # Clear old tool definitions
-            await sync_to_async(lambda: MCPToolDefinition.objects.filter(server=server).delete())()
+                    # Clear old tool definitions
+                    await sync_to_async(lambda: MCPToolDefinition.objects.filter(server=server).delete())()
 
-            # Store new tools
-            tools_stored = 0
-            for tool_def in schema.get('tools', []):
-                # Build prefixed name
-                if server.tool_prefix:
-                    prefixed_name = f"{server.tool_prefix}_{tool_def['name']}"
-                else:
-                    prefixed_name = tool_def['name']
+                    # Store new tools
+                    tools_stored = 0
+                    for tool_def in tools_result.tools:
+                        # Build prefixed name
+                        if server.tool_prefix:
+                            prefixed_name = f"{server.tool_prefix}_{tool_def.name}"
+                        else:
+                            prefixed_name = tool_def.name
 
-                # Extract required inputs
-                input_schema = tool_def.get('inputSchema', {})
-                required_inputs = input_schema.get('required', [])
+                        # Extract input schema and required inputs
+                        input_schema = tool_def.inputSchema if hasattr(tool_def, 'inputSchema') else {}
+                        if isinstance(input_schema, dict):
+                            required_inputs = input_schema.get('required', [])
+                        else:
+                            required_inputs = getattr(input_schema, 'required', []) if hasattr(input_schema, 'required') else []
 
-                # Extract capabilities (basic keyword matching)
-                capabilities = MCPDiscoveryService._extract_capabilities(
-                    tool_def.get('description', '')
-                )
+                        # Extract capabilities (basic keyword matching)
+                        description = tool_def.description if hasattr(tool_def, 'description') else ''
+                        capabilities = MCPDiscoveryService._extract_capabilities(description)
 
-                # Create tool definition
-                await sync_to_async(MCPToolDefinition.objects.create)(
-                    server=server,
-                    name=tool_def['name'],
-                    prefixed_name=prefixed_name,
-                    title=tool_def.get('title') or '',
-                    description=tool_def.get('description') or '',
-                    input_schema=input_schema,
-                    output_schema=tool_def.get('outputSchema'),
-                    annotations=tool_def.get('annotations'),
-                    meta=tool_def.get('meta'),
-                    capabilities_tags=capabilities,
-                    required_inputs=required_inputs
-                )
-                tools_stored += 1
+                        # Create tool definition
+                        await sync_to_async(MCPToolDefinition.objects.create)(
+                            server=server,
+                            name=tool_def.name,
+                            prefixed_name=prefixed_name,
+                            title=getattr(tool_def, 'title', ''),
+                            description=description,
+                            input_schema=input_schema if isinstance(input_schema, dict) else {},
+                            output_schema=getattr(tool_def, 'outputSchema', None),
+                            annotations=getattr(tool_def, 'annotations', None),
+                            meta=getattr(tool_def, 'meta', None),
+                            capabilities_tags=capabilities,
+                            required_inputs=required_inputs
+                        )
+                        tools_stored += 1
 
-            # Update server metadata
-            server.is_healthy = True
-            server.last_schema_sync = timezone.now()
-            await sync_to_async(server.save)()
+                    # Update server metadata
+                    server.is_healthy = True
+                    server.last_schema_sync = timezone.now()
+                    await sync_to_async(server.save)()
 
-            return {
-                "tools_discovered": len(schema.get('tools', [])),
-                "tools_stored": tools_stored,
-                "server_healthy": True,
-                "error": None
-            }
+                    return {
+                        "tools_discovered": len(tools_result.tools),
+                        "tools_stored": tools_stored,
+                        "server_healthy": True,
+                        "error": None
+                    }
 
         except MCPServer.DoesNotExist:
             return {

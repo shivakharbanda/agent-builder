@@ -43,8 +43,10 @@ export function TestAgentModal({ agent, prompts, onClose }: TestAgentModalProps)
   const [loadingCredentials, setLoadingCredentials] = useState(true);
   const [selectedCredentialId, setSelectedCredentialId] = useState<number>(0);
   const [model, setModel] = useState<string>('gemini-1.5-flash');
+  const [mcpServers, setMcpServers] = useState<any[]>([]);
+  const [selectedMcpServerIds, setSelectedMcpServerIds] = useState<number[]>([]);
 
-  // Load LLM credentials
+  // Load LLM credentials and MCP servers
   useEffect(() => {
     const loadCredentials = async () => {
       try {
@@ -69,17 +71,35 @@ export function TestAgentModal({ agent, prompts, onClose }: TestAgentModalProps)
       }
     };
 
+    const loadMcpServers = async () => {
+      try {
+        const response = await api.getMCPServers();
+        setMcpServers(response.results || []);
+      } catch (err) {
+        console.error('Failed to load MCP servers:', err);
+      }
+    };
+
     loadCredentials();
+    loadMcpServers();
   }, []);
 
   const handleRunStructured = async (inputs: Record<string, any>) => {
     if (!selectedCredentialId || !model.trim()) return;
-    await runStructuredTest(inputs, selectedCredentialId, model);
+    await runStructuredTest(inputs, selectedCredentialId, model, selectedMcpServerIds);
   };
 
   const handleSendMessage = async (message: string) => {
     if (!selectedCredentialId || !model.trim()) return;
-    await runUnstructuredTest(message, selectedCredentialId, model);
+    await runUnstructuredTest(message, selectedCredentialId, model, selectedMcpServerIds);
+  };
+
+  const toggleMcpServer = (serverId: number) => {
+    setSelectedMcpServerIds(prev =>
+      prev.includes(serverId)
+        ? prev.filter(id => id !== serverId)
+        : [...prev, serverId]
+    );
   };
 
   if (loadingCredentials) {
@@ -168,6 +188,39 @@ export function TestAgentModal({ agent, prompts, onClose }: TestAgentModalProps)
               </div>
             </div>
           </div>
+
+          {/* MCP Servers Selection */}
+          {mcpServers.length > 0 && (
+            <div className="mt-4 pt-4 border-t border-[#374151]">
+              <div className="flex items-start gap-4">
+                <span className="material-symbols-outlined text-gray-400 mt-1">extension</span>
+                <div className="flex-1">
+                  <label className="text-sm text-gray-300 mb-2 block font-medium">
+                    MCP Servers (Optional)
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {mcpServers.map(server => (
+                      <button
+                        key={server.id}
+                        type="button"
+                        onClick={() => toggleMcpServer(server.id)}
+                        className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                          selectedMcpServerIds.includes(server.id)
+                            ? 'bg-[#1173d4] text-white'
+                            : 'bg-[#233648] text-gray-300 hover:bg-[#2d4a5f]'
+                        }`}
+                      >
+                        {server.name}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-gray-500 text-xs mt-2">
+                    Select MCP servers to attach for this test. {selectedMcpServerIds.length} selected.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Content Area */}

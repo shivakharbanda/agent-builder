@@ -11,8 +11,8 @@ interface UseAgentTestResult {
   error: string | null;
   testResult: AgentTestResponse | null;
   conversationHistory: ConversationMessage[];
-  runStructuredTest: (inputs: Record<string, any>, credentialId: number, model?: string) => Promise<void>;
-  runUnstructuredTest: (message: string, credentialId: number, model?: string) => Promise<void>;
+  runStructuredTest: (inputs: Record<string, any>, credentialId: number, model?: string, mcpServerIds?: number[]) => Promise<void>;
+  runUnstructuredTest: (message: string, credentialId: number, model?: string, mcpServerIds?: number[]) => Promise<void>;
   clearConversation: () => void;
   clearResults: () => void;
 }
@@ -26,7 +26,8 @@ export const useAgentTest = (agentId: number): UseAgentTestResult => {
   const runStructuredTest = useCallback(async (
     inputs: Record<string, any>,
     credentialId: number,
-    model?: string
+    model?: string,
+    mcpServerIds?: number[]
   ) => {
     try {
       setTesting(true);
@@ -37,7 +38,8 @@ export const useAgentTest = (agentId: number): UseAgentTestResult => {
         test_type: 'structured',
         credential_id: credentialId,
         model,
-        inputs
+        inputs,
+        mcp_server_ids: mcpServerIds
       };
 
       const result = await api.testAgent(agentId, request);
@@ -57,7 +59,8 @@ export const useAgentTest = (agentId: number): UseAgentTestResult => {
   const runUnstructuredTest = useCallback(async (
     message: string,
     credentialId: number,
-    model?: string
+    model?: string,
+    mcpServerIds?: number[]
   ) => {
     try {
       setTesting(true);
@@ -68,7 +71,8 @@ export const useAgentTest = (agentId: number): UseAgentTestResult => {
         credential_id: credentialId,
         model,
         message,
-        conversation_history: conversationHistory
+        conversation_history: conversationHistory,
+        mcp_server_ids: mcpServerIds
       };
 
       const result = await api.testAgent(agentId, request);
