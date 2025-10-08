@@ -6,8 +6,9 @@ import { LoadingState } from '../ui/Loading';
 import { StructuredTestForm } from './StructuredTestForm';
 import { UnstructuredTestChat } from './UnstructuredTestChat';
 import { useAgentTest } from '../../hooks/useAgentTest';
+import { useInternalTools } from '../../hooks/useAPI';
 import { api } from '../../lib/api';
-import type { Agent, Prompt, Credential } from '../../lib/types';
+import type { Agent, Prompt, Credential, InternalTool, InternalToolAttachment } from '../../lib/types';
 
 interface TestAgentModalProps {
   agent: Agent;
@@ -39,30 +40,39 @@ export function TestAgentModal({ agent, prompts, onClose }: TestAgentModalProps)
     return Array.from(found).sort();
   }, [prompts]);
 
-  const [credentials, setCredentials] = useState<Credential[]>([]);
+  const [llmCredentials, setLlmCredentials] = useState<Credential[]>([]);
+  const [allCredentials, setAllCredentials] = useState<Credential[]>([]);
   const [loadingCredentials, setLoadingCredentials] = useState(true);
   const [selectedCredentialId, setSelectedCredentialId] = useState<number>(0);
   const [model, setModel] = useState<string>('gemini-1.5-flash');
   const [mcpServers, setMcpServers] = useState<any[]>([]);
   const [selectedMcpServerIds, setSelectedMcpServerIds] = useState<number[]>([]);
+  const [selectedInternalTools, setSelectedInternalTools] = useState<Map<number, number>>(new Map());
 
-  // Load LLM credentials and MCP servers
+  // Load internal tools
+  const { data: internalToolsData, loading: loadingInternalTools } = useInternalTools();
+
+  // Load credentials and MCP servers
   useEffect(() => {
     const loadCredentials = async () => {
       try {
         setLoadingCredentials(true);
         const response = await api.getCredentials();
-        // Filter for LLM credentials only
-        const llmCredentials = response.results.filter(
+
+        // Store all credentials for internal tools
+        setAllCredentials(response.results);
+
+        // Filter for LLM credentials
+        const llmCreds = response.results.filter(
           (cred) => cred.credential_type_name?.toLowerCase().includes('llm') ||
                      cred.credential_type_name?.toLowerCase().includes('openai') ||
                      cred.credential_type_name?.toLowerCase().includes('gemini')
         );
-        setCredentials(llmCredentials);
+        setLlmCredentials(llmCreds);
 
-        // Auto-select first credential if available
-        if (llmCredentials.length > 0) {
-          setSelectedCredentialId(llmCredentials[0].id);
+        // Auto-select first LLM credential if available
+        if (llmCreds.length > 0) {
+          setSelectedCredentialId(llmCreds[0].id);
         }
       } catch (err) {
         console.error('Failed to load credentials:', err);
@@ -86,12 +96,24 @@ export function TestAgentModal({ agent, prompts, onClose }: TestAgentModalProps)
 
   const handleRunStructured = async (inputs: Record<string, any>) => {
     if (!selectedCredentialId || !model.trim()) return;
-    await runStructuredTest(inputs, selectedCredentialId, model, selectedMcpServerIds);
+
+    // Convert internal tools map to attachments array
+    const internalToolAttachments: InternalToolAttachment[] = Array.from(selectedInternalTools.entries()).map(
+      ([tool_id, credential_id]) => ({ tool_id, credential_id })
+    );
+
+    await runStructuredTest(inputs, selectedCredentialId, model, selectedMcpServerIds, internalToolAttachments);
   };
 
   const handleSendMessage = async (message: string) => {
     if (!selectedCredentialId || !model.trim()) return;
-    await runUnstructuredTest(message, selectedCredentialId, model, selectedMcpServerIds);
+
+    // Convert internal tools map to attachments array
+    const internalToolAttachments: InternalToolAttachment[] = Array.from(selectedInternalTools.entries()).map(
+      ([tool_id, credential_id]) => ({ tool_id, credential_id })
+    );
+
+    await runUnstructuredTest(message, selectedCredentialId, model, selectedMcpServerIds, internalToolAttachments);
   };
 
   const toggleMcpServer = (serverId: number) => {
@@ -101,6 +123,42 @@ export function TestAgentModal({ agent, prompts, onClose }: TestAgentModalProps)
         : [...prev, serverId]
     );
   };
+
+  const toggleInternalTool = (toolId: number, tool: InternalTool) => {
+    setSelectedInternalTools(prev => {
+      const newMap = new Map(prev);
+      if (newMap.has(toolId)) {
+        newMap.delete(toolId);
+      } else {
+        // Auto-select first matching credential if available
+        const matchingCreds = allCredentials.filter(
+          cred => tool.required_credential_type && cred.credential_type === tool.required_credential_type
+        );
+        const defaultCredId = matchingCreds.length > 0 ? matchingCreds[0].id : 0;
+        newMap.set(toolId, defaultCredId);
+      }
+      return newMap;
+    });
+  };
+
+  const updateInternalToolCredential = (toolId: number, credentialId: number) => {
+    setSelectedInternalTools(prev => {
+      const newMap = new Map(prev);
+      newMap.set(toolId, credentialId);
+      return newMap;
+    });
+  };
+
+  const getCredentialsForTool = (tool: InternalTool): Credential[] => {
+    if (!tool.requires_credential || !tool.required_credential_type) {
+      return allCredentials;
+    }
+    return allCredentials.filter(
+      cred => cred.credential_type === tool.required_credential_type
+    );
+  };
+
+  const internalTools = internalToolsData?.results || [];
 
   if (loadingCredentials) {
     return (
@@ -158,14 +216,14 @@ export function TestAgentModal({ agent, prompts, onClose }: TestAgentModalProps)
                   onChange={(e) => setSelectedCredentialId(parseInt(e.target.value))}
                   options={[
                     { value: 0, label: 'Select a credential', disabled: true },
-                    ...credentials.map(cred => ({
+                    ...llmCredentials.map(cred => ({
                       value: cred.id,
                       label: `${cred.name} (${cred.credential_type_name})`
                     }))
                   ]}
                   required
                 />
-                {credentials.length === 0 && (
+                {llmCredentials.length === 0 && (
                   <p className="text-yellow-400 text-xs mt-2">
                     ⚠️ No LLM credentials found. Please create one in the Credentials section.
                   </p>
@@ -216,6 +274,68 @@ export function TestAgentModal({ agent, prompts, onClose }: TestAgentModalProps)
                   </div>
                   <p className="text-gray-500 text-xs mt-2">
                     Select MCP servers to attach for this test. {selectedMcpServerIds.length} selected.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Internal Tools Selection */}
+          {internalTools.length > 0 && (
+            <div className="mt-4 pt-4 border-t border-[#374151]">
+              <div className="flex items-start gap-4">
+                <span className="material-symbols-outlined text-gray-400 mt-1">construction</span>
+                <div className="flex-1">
+                  <label className="text-sm text-gray-300 mb-2 block font-medium">
+                    Internal Tools (Optional)
+                  </label>
+                  <div className="space-y-3">
+                    {internalTools.map(tool => {
+                      const isSelected = selectedInternalTools.has(tool.id);
+                      const selectedCredId = selectedInternalTools.get(tool.id) || 0;
+                      const availableCreds = getCredentialsForTool(tool);
+
+                      return (
+                        <div key={tool.id} className="flex items-start gap-3">
+                          <button
+                            type="button"
+                            onClick={() => toggleInternalTool(tool.id, tool)}
+                            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors flex-shrink-0 ${
+                              isSelected
+                                ? 'bg-[#1173d4] text-white'
+                                : 'bg-[#233648] text-gray-300 hover:bg-[#2d4a5f]'
+                            }`}
+                          >
+                            {tool.name}
+                          </button>
+                          {isSelected && (
+                            <div className="flex-1">
+                              <Select
+                                label=""
+                                value={selectedCredId}
+                                onChange={(e) => updateInternalToolCredential(tool.id, parseInt(e.target.value))}
+                                options={[
+                                  { value: 0, label: 'Select credential', disabled: true },
+                                  ...availableCreds.map(cred => ({
+                                    value: cred.id,
+                                    label: `${cred.name} (${cred.credential_type_name})`
+                                  }))
+                                ]}
+                                required
+                              />
+                              {availableCreds.length === 0 && (
+                                <p className="text-yellow-400 text-xs mt-1">
+                                  ⚠️ No matching credentials found. Create a {tool.required_credential_type_name} credential.
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="text-gray-500 text-xs mt-2">
+                    Select internal tools and their credentials for this test. {selectedInternalTools.size} selected.
                   </p>
                 </div>
               </div>

@@ -46,6 +46,7 @@ class NodeFactory:
         from .filter import FilterNode
         from .script import ScriptNode
         from .conditional import ConditionalNode
+        from .internal_tool import InternalToolNode
 
         cls.NODE_REGISTRY = {
             'database': DatabaseNode,
@@ -54,6 +55,7 @@ class NodeFactory:
             'filter': FilterNode,
             'script': ScriptNode,
             'conditional': ConditionalNode,
+            'internal_tool': InternalToolNode,
         }
 
     @classmethod

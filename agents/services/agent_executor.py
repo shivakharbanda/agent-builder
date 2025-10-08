@@ -139,6 +139,158 @@ class AgentExecutor:
 
         return toolsets
 
+    def _load_internal_tools(self, tool_attachments: Optional[List[Dict[str, int]]] = None) -> List:
+        """
+        Load internal tools with credentials injected.
+
+        Args:
+            tool_attachments: Optional list of tool+credential attachments for ad-hoc mode.
+                            Format: [{"tool_id": 1, "credential_id": 2}, ...]
+                            If None, loads from agent's permanent attachments.
+
+        Returns:
+            List of PydanticAI tool functions with credentials injected
+        """
+        from agents.tools import get_tool
+        from agents.models import AgentInternalTool, InternalTool
+        from credentials.models import Credential
+
+        toolsets = []
+
+        print(f"\n{'='*80}")
+        print(f"[AGENT EXECUTOR] Loading internal tools...")
+
+        if tool_attachments is not None:
+            # Ad-hoc mode: Load specific tool+credential pairs
+            print(f"[AGENT EXECUTOR] Ad-hoc mode: Loading {len(tool_attachments)} tool attachments")
+
+            for idx, attachment in enumerate(tool_attachments, 1):
+                tool_id = attachment.get('tool_id')
+                credential_id = attachment.get('credential_id')
+
+                print(f"\n[AGENT EXECUTOR] Processing ad-hoc tool {idx}/{len(tool_attachments)}")
+                print(f"[AGENT EXECUTOR]   - Tool ID: {tool_id}")
+                print(f"[AGENT EXECUTOR]   - Credential ID: {credential_id}")
+
+                try:
+                    # Load tool and credential from database
+                    tool_config = InternalTool.objects.get(id=tool_id, is_active=True)
+                    credential = Credential.objects.get(id=credential_id, is_active=True, is_deleted=False)
+
+                    print(f"[AGENT EXECUTOR]   - Tool: {tool_config.name}")
+                    print(f"[AGENT EXECUTOR]   - Tool Type: {tool_config.tool_type}")
+                    print(f"[AGENT EXECUTOR]   - Credential: {credential.name}")
+                    print(f"[AGENT EXECUTOR]   - Credential Type: {credential.credential_type.type_name}")
+
+                    # Skip disabled tools
+                    if not tool_config.is_enabled:
+                        print(f"[AGENT EXECUTOR]   ⚠️  SKIPPED: Tool is disabled")
+                        continue
+
+                    # Validate credential type matches
+                    if tool_config.requires_credential:
+                        if not tool_config.required_credential_type:
+                            print(f"[AGENT EXECUTOR]   ⚠️  Warning: Tool requires credential but no type specified")
+                        elif credential.credential_type != tool_config.required_credential_type:
+                            print(f"[AGENT EXECUTOR]   ❌ SKIPPED: Credential type mismatch")
+                            print(f"[AGENT EXECUTOR]      Expected: {tool_config.required_credential_type.type_name}")
+                            print(f"[AGENT EXECUTOR]      Got: {credential.credential_type.type_name}")
+                            continue
+
+                    # Get tool class from registry
+                    print(f"[AGENT EXECUTOR]   → Loading tool from registry...")
+                    tool_class = get_tool(tool_config.tool_type)
+
+                    # Get PydanticAI tool function with credential injected
+                    print(f"[AGENT EXECUTOR]   → Creating PydanticAI tool wrapper...")
+                    pydantic_tool = tool_class.get_pydantic_tool(credential)
+
+                    toolsets.append(pydantic_tool)
+                    print(f"[AGENT EXECUTOR]   ✅ Successfully loaded internal tool: {tool_config.name}")
+
+                except InternalTool.DoesNotExist:
+                    print(f"[AGENT EXECUTOR]   ❌ SKIPPED: Tool ID {tool_id} not found or inactive")
+                    continue
+                except Credential.DoesNotExist:
+                    print(f"[AGENT EXECUTOR]   ❌ SKIPPED: Credential ID {credential_id} not found or inactive")
+                    continue
+                except KeyError as e:
+                    print(f"[AGENT EXECUTOR]   ❌ Failed: Tool type not found in registry")
+                    print(f"[AGENT EXECUTOR]   Error: {str(e)}")
+                    continue
+                except Exception as e:
+                    print(f"[AGENT EXECUTOR]   ❌ Failed to load internal tool")
+                    print(f"[AGENT EXECUTOR]   Error: {type(e).__name__}: {str(e)}")
+                    print(f"[AGENT EXECUTOR]   Traceback: {traceback.format_exc()}")
+                    continue
+
+            print(f"\n[AGENT EXECUTOR] Ad-hoc Internal Tools Summary:")
+            print(f"[AGENT EXECUTOR]   - Total attachments processed: {len(tool_attachments)}")
+            print(f"[AGENT EXECUTOR]   - Successfully loaded: {len(toolsets)}")
+            print(f"[AGENT EXECUTOR]   - Failed/Skipped: {len(tool_attachments) - len(toolsets)}")
+            print(f"{'='*80}\n")
+
+            return toolsets
+
+        # Load from agent's permanent internal tool attachments
+        agent_tools = AgentInternalTool.objects.filter(
+            agent=self.agent,
+            is_active=True
+        ).select_related('tool', 'credential')
+
+        print(f"[AGENT EXECUTOR] Permanent mode: Found {len(agent_tools)} internal tool attachments")
+
+        for idx, agent_tool in enumerate(agent_tools, 1):
+            tool_config = agent_tool.tool
+            credential = agent_tool.credential
+
+            print(f"\n[AGENT EXECUTOR] Processing internal tool {idx}/{len(agent_tools)}: {tool_config.name}")
+            print(f"[AGENT EXECUTOR]   - Tool Type: {tool_config.tool_type}")
+            print(f"[AGENT EXECUTOR]   - Category: {tool_config.category}")
+            print(f"[AGENT EXECUTOR]   - Requires Credential: {tool_config.requires_credential}")
+            print(f"[AGENT EXECUTOR]   - Credential: {credential.name if credential else 'None'}")
+            print(f"[AGENT EXECUTOR]   - Enabled: {tool_config.is_enabled}")
+
+            # Skip disabled tools
+            if not tool_config.is_enabled:
+                print(f"[AGENT EXECUTOR]   ⚠️  SKIPPED: Tool is disabled")
+                continue
+
+            # Validate credential if required
+            if tool_config.requires_credential and not credential:
+                print(f"[AGENT EXECUTOR]   ❌ SKIPPED: Tool requires credential but none provided")
+                continue
+
+            try:
+                # Get tool class from registry
+                print(f"[AGENT EXECUTOR]   → Loading tool from registry...")
+                tool_class = get_tool(tool_config.tool_type)
+
+                # Get PydanticAI tool function with credential injected
+                print(f"[AGENT EXECUTOR]   → Creating PydanticAI tool wrapper...")
+                pydantic_tool = tool_class.get_pydantic_tool(credential)
+
+                toolsets.append(pydantic_tool)
+                print(f"[AGENT EXECUTOR]   ✅ Successfully loaded internal tool: {tool_config.name}")
+
+            except KeyError as e:
+                print(f"[AGENT EXECUTOR]   ❌ Failed: Tool type '{tool_config.tool_type}' not found in registry")
+                print(f"[AGENT EXECUTOR]   Error: {str(e)}")
+                continue
+            except Exception as e:
+                print(f"[AGENT EXECUTOR]   ❌ Failed to load internal tool {tool_config.name}")
+                print(f"[AGENT EXECUTOR]   Error: {type(e).__name__}: {str(e)}")
+                print(f"[AGENT EXECUTOR]   Traceback: {traceback.format_exc()}")
+                continue
+
+        print(f"\n[AGENT EXECUTOR] Internal Tools Summary:")
+        print(f"[AGENT EXECUTOR]   - Total tools processed: {len(agent_tools)}")
+        print(f"[AGENT EXECUTOR]   - Successfully loaded: {len(toolsets)}")
+        print(f"[AGENT EXECUTOR]   - Failed/Skipped: {len(agent_tools) - len(toolsets)}")
+        print(f"{'='*80}\n")
+
+        return toolsets
+
     def _get_llm_model(self, credential_id: int, model: str = None):
         """
         Get PydanticAI model instance from credential.
@@ -227,7 +379,8 @@ class AgentExecutor:
         placeholder_values: Dict[str, Any],
         credential_id: int,
         model: str = None,
-        mcp_server_ids: Optional[List[int]] = None
+        mcp_server_ids: Optional[List[int]] = None,
+        internal_tool_attachments: Optional[List[Dict[str, int]]] = None
     ) -> Dict[str, Any]:
         """
         Execute structured agent (returns JSON according to schema).
@@ -237,6 +390,8 @@ class AgentExecutor:
             credential_id: ID of LLM credential to use
             model: Optional model name override
             mcp_server_ids: Optional list of MCP server IDs to attach ad-hoc
+            internal_tool_attachments: Optional list of internal tool attachments
+                Format: [{"tool_id": 1, "credential_id": 2}, ...]
 
         Returns:
             Dict containing:
@@ -291,14 +446,22 @@ class AgentExecutor:
             )
 
             # Load MCP toolsets
-            toolsets = self._load_mcp_toolsets(mcp_server_ids)
+            mcp_toolsets = self._load_mcp_toolsets(mcp_server_ids)
+
+            # Load internal tools (plain functions)
+            internal_tools = self._load_internal_tools(internal_tool_attachments)
+
+            print(f"[AGENT EXECUTOR] Total tools loaded: {len(mcp_toolsets) + len(internal_tools)} (MCP toolsets: {len(mcp_toolsets)}, Internal tools: {len(internal_tools)})")
 
             # Create PydanticAI agent
+            # toolsets = MCP server objects (MCPServerStreamableHTTP, MCPServerSSE)
+            # tools = Plain functions or Tool instances
             pydantic_agent = PydanticAgent(
                 model=llm_model,
                 output_type=output_type,
                 system_prompt=system_prompt,
-                toolsets=toolsets
+                toolsets=mcp_toolsets,
+                tools=internal_tools
             )
 
             # Execute agent
@@ -340,7 +503,8 @@ class AgentExecutor:
         credential_id: int,
         conversation_history: Optional[List[Dict[str, str]]] = None,
         model: str = None,
-        mcp_server_ids: Optional[List[int]] = None
+        mcp_server_ids: Optional[List[int]] = None,
+        internal_tool_attachments: Optional[List[Dict[str, int]]] = None
     ) -> Dict[str, Any]:
         """
         Execute unstructured agent (conversational, returns text).
@@ -352,6 +516,8 @@ class AgentExecutor:
                 Format: [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]
             model: Optional model name override
             mcp_server_ids: Optional list of MCP server IDs to attach ad-hoc
+            internal_tool_attachments: Optional list of internal tool attachments
+                Format: [{"tool_id": 1, "credential_id": 2}, ...]
 
         Returns:
             Dict containing:
@@ -382,13 +548,21 @@ class AgentExecutor:
                 system_prompt = f"You are a helpful AI assistant named {self.agent.name}."
 
             # Load MCP toolsets
-            toolsets = self._load_mcp_toolsets(mcp_server_ids)
+            mcp_toolsets = self._load_mcp_toolsets(mcp_server_ids)
+
+            # Load internal tools (plain functions)
+            internal_tools = self._load_internal_tools(internal_tool_attachments)
+
+            print(f"[AGENT EXECUTOR] Total tools loaded: {len(mcp_toolsets) + len(internal_tools)} (MCP toolsets: {len(mcp_toolsets)}, Internal tools: {len(internal_tools)})")
 
             # Create PydanticAI agent (no output_type for unstructured)
+            # toolsets = MCP server objects (MCPServerStreamableHTTP, MCPServerSSE)
+            # tools = Plain functions or Tool instances
             pydantic_agent = PydanticAgent(
                 model=llm_model,
                 system_prompt=system_prompt,
-                toolsets=toolsets
+                toolsets=mcp_toolsets,
+                tools=internal_tools
             )
 
             # Build message history for PydanticAI

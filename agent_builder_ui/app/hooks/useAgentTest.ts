@@ -3,7 +3,8 @@ import { api } from '../lib/api';
 import type {
   AgentTestRequest,
   AgentTestResponse,
-  ConversationMessage
+  ConversationMessage,
+  InternalToolAttachment
 } from '../lib/types';
 
 interface UseAgentTestResult {
@@ -11,8 +12,8 @@ interface UseAgentTestResult {
   error: string | null;
   testResult: AgentTestResponse | null;
   conversationHistory: ConversationMessage[];
-  runStructuredTest: (inputs: Record<string, any>, credentialId: number, model?: string, mcpServerIds?: number[]) => Promise<void>;
-  runUnstructuredTest: (message: string, credentialId: number, model?: string, mcpServerIds?: number[]) => Promise<void>;
+  runStructuredTest: (inputs: Record<string, any>, credentialId: number, model?: string, mcpServerIds?: number[], internalToolAttachments?: InternalToolAttachment[]) => Promise<void>;
+  runUnstructuredTest: (message: string, credentialId: number, model?: string, mcpServerIds?: number[], internalToolAttachments?: InternalToolAttachment[]) => Promise<void>;
   clearConversation: () => void;
   clearResults: () => void;
 }
@@ -27,7 +28,8 @@ export const useAgentTest = (agentId: number): UseAgentTestResult => {
     inputs: Record<string, any>,
     credentialId: number,
     model?: string,
-    mcpServerIds?: number[]
+    mcpServerIds?: number[],
+    internalToolAttachments?: InternalToolAttachment[]
   ) => {
     try {
       setTesting(true);
@@ -39,7 +41,8 @@ export const useAgentTest = (agentId: number): UseAgentTestResult => {
         credential_id: credentialId,
         model,
         inputs,
-        mcp_server_ids: mcpServerIds
+        mcp_server_ids: mcpServerIds,
+        internal_tool_attachments: internalToolAttachments
       };
 
       const result = await api.testAgent(agentId, request);
@@ -60,7 +63,8 @@ export const useAgentTest = (agentId: number): UseAgentTestResult => {
     message: string,
     credentialId: number,
     model?: string,
-    mcpServerIds?: number[]
+    mcpServerIds?: number[],
+    internalToolAttachments?: InternalToolAttachment[]
   ) => {
     try {
       setTesting(true);
@@ -72,7 +76,8 @@ export const useAgentTest = (agentId: number): UseAgentTestResult => {
         model,
         message,
         conversation_history: conversationHistory,
-        mcp_server_ids: mcpServerIds
+        mcp_server_ids: mcpServerIds,
+        internal_tool_attachments: internalToolAttachments
       };
 
       const result = await api.testAgent(agentId, request);

@@ -123,15 +123,16 @@ class MCPDiscoveryService:
                         description = tool_def.description if hasattr(tool_def, 'description') else ''
                         capabilities = MCPDiscoveryService._extract_capabilities(description)
 
+                        # Bulletproof: Convert None to appropriate defaults
                         tools.append({
                             'name': tool_def.name,
                             'prefixed_name': prefixed_name,
-                            'title': getattr(tool_def, 'title', ''),
-                            'description': description,
-                            'input_schema': input_schema if isinstance(input_schema, dict) else {},
+                            'title': (getattr(tool_def, 'title', None) or ''),
+                            'description': (description or ''),
+                            'input_schema': (input_schema if isinstance(input_schema, dict) else {}) or {},
                             'output_schema': getattr(tool_def, 'outputSchema', None),
-                            'capabilities_tags': capabilities,
-                            'required_inputs': required_inputs
+                            'capabilities_tags': (capabilities or []),
+                            'required_inputs': (required_inputs or [])
                         })
 
                     return {
@@ -164,7 +165,8 @@ class MCPDiscoveryService:
         try:
             server = await sync_to_async(MCPServer.objects.get)(id=server_id)
 
-            # Get MCP session based on server's transport type
+            # STEP 1: Fetch tools from MCP server (async operation)
+            tools_data = []
             async with MCPDiscoveryService._get_mcp_session(server.url, server.transport) as (read_stream, write_stream, _):
                 async with ClientSession(read_stream, write_stream) as session:
                     # Initialize session (handshake)
@@ -173,11 +175,7 @@ class MCPDiscoveryService:
                     # List available tools
                     tools_result = await session.list_tools()
 
-                    # Clear old tool definitions
-                    await sync_to_async(lambda: MCPToolDefinition.objects.filter(server=server).delete())()
-
-                    # Store new tools
-                    tools_stored = 0
+                    # Parse tools into plain dicts (while still in MCP session)
                     for tool_def in tools_result.tools:
                         # Build prefixed name
                         if server.tool_prefix:
@@ -196,33 +194,44 @@ class MCPDiscoveryService:
                         description = tool_def.description if hasattr(tool_def, 'description') else ''
                         capabilities = MCPDiscoveryService._extract_capabilities(description)
 
-                        # Create tool definition
-                        await sync_to_async(MCPToolDefinition.objects.create)(
-                            server=server,
-                            name=tool_def.name,
-                            prefixed_name=prefixed_name,
-                            title=getattr(tool_def, 'title', ''),
-                            description=description,
-                            input_schema=input_schema if isinstance(input_schema, dict) else {},
-                            output_schema=getattr(tool_def, 'outputSchema', None),
-                            annotations=getattr(tool_def, 'annotations', None),
-                            meta=getattr(tool_def, 'meta', None),
-                            capabilities_tags=capabilities,
-                            required_inputs=required_inputs
-                        )
-                        tools_stored += 1
+                        # Bulletproof: Convert None to appropriate defaults for NOT NULL fields
+                        tools_data.append({
+                            'name': tool_def.name,
+                            'prefixed_name': prefixed_name,
+                            'title': (getattr(tool_def, 'title', None) or ''),  # NOT NULL: must be ''
+                            'description': (description or ''),  # NOT NULL: must be ''
+                            'input_schema': (input_schema if isinstance(input_schema, dict) else {}) or {},  # NOT NULL: must be {}
+                            'output_schema': getattr(tool_def, 'outputSchema', None),  # CAN be None
+                            'annotations': getattr(tool_def, 'annotations', None),  # CAN be None
+                            'meta': getattr(tool_def, 'meta', None),  # CAN be None
+                            'capabilities_tags': (capabilities or []),  # NOT NULL: must be []
+                            'required_inputs': (required_inputs or [])  # NOT NULL: must be []
+                        })
 
-                    # Update server metadata
-                    server.is_healthy = True
-                    server.last_schema_sync = timezone.now()
-                    await sync_to_async(server.save)()
+            # STEP 2: MCP session is now closed, do database operations
+            # Clear old tool definitions
+            await sync_to_async(lambda: MCPToolDefinition.objects.filter(server=server).delete())()
 
-                    return {
-                        "tools_discovered": len(tools_result.tools),
-                        "tools_stored": tools_stored,
-                        "server_healthy": True,
-                        "error": None
-                    }
+            # Store new tools
+            tools_stored = 0
+            for tool_data in tools_data:
+                await sync_to_async(MCPToolDefinition.objects.create)(
+                    server=server,
+                    **tool_data
+                )
+                tools_stored += 1
+
+            # Update server metadata
+            server.is_healthy = True
+            server.last_schema_sync = timezone.now()
+            await sync_to_async(server.save)()
+
+            return {
+                "tools_discovered": len(tools_data),
+                "tools_stored": tools_stored,
+                "server_healthy": True,
+                "error": None
+            }
 
         except MCPServer.DoesNotExist:
             return {

@@ -209,6 +209,10 @@ export function useTools() {
   return useAPICall(() => api.getTools());
 }
 
+export function useInternalTools() {
+  return useAPICall(() => api.getInternalTools());
+}
+
 export function useWorkflows(projectId?: number) {
   const fallbackData = {
     count: 0,

@@ -7,6 +7,7 @@ import type {
   Prompt, PromptCreate,
   Tool, ToolCreate,
   AgentTool, AgentToolCreate,
+  InternalTool, InternalToolCreate,
   Workflow, WorkflowCreate, WorkflowProperties,
   DataSource, DataSourceCreate,
   WorkflowNode, WorkflowNodeCreate,
@@ -342,6 +343,44 @@ class AgentBuilderAPI {
 
   async deleteAgentTool(id: number): Promise<void> {
     await this.client.delete(`/agent-tools/${id}/`);
+  }
+
+  // Internal Tools API
+  async getInternalTools(): Promise<PaginatedResponse<InternalTool>> {
+    const response = await this.client.get<PaginatedResponse<InternalTool>>('/internal-tools/');
+    return response.data;
+  }
+
+  async getInternalTool(id: number): Promise<InternalTool> {
+    const response = await this.client.get<InternalTool>(`/internal-tools/${id}/`);
+    return response.data;
+  }
+
+  async createInternalTool(data: InternalToolCreate): Promise<InternalTool> {
+    const response = await this.client.post<InternalTool>('/internal-tools/', data);
+    return response.data;
+  }
+
+  async updateInternalTool(id: number, data: Partial<InternalToolCreate>): Promise<InternalTool> {
+    const response = await this.client.patch<InternalTool>(`/internal-tools/${id}/`, data);
+    return response.data;
+  }
+
+  async deleteInternalTool(id: number): Promise<void> {
+    await this.client.delete(`/internal-tools/${id}/`);
+  }
+
+  async testInternalTool(id: number, credential_id: number, inputs: Record<string, any>): Promise<any> {
+    const response = await this.client.post(`/internal-tools/${id}/test_execute/`, {
+      credential_id,
+      inputs
+    });
+    return response.data;
+  }
+
+  async getInternalToolRegistry(): Promise<{ tools: any[]; count: number }> {
+    const response = await this.client.get('/internal-tools/registry/');
+    return response.data;
   }
 
   // Workflows API

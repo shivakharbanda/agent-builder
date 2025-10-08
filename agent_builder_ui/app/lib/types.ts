@@ -99,6 +99,35 @@ export interface AgentTool extends BaseModel {
   configuration: Record<string, any>;
 }
 
+// Internal Tool types
+export interface InternalTool extends BaseModel {
+  name: string;
+  description: string;
+  tool_type: string;
+  category: string;
+  requires_credential: boolean;
+  required_credential_type?: number;
+  required_credential_type_name?: string;
+  required_credential_category?: string;
+  input_schema: Record<string, any>;
+  output_schema: Record<string, any>;
+  configuration: Record<string, any>;
+  is_enabled: boolean;
+}
+
+export interface InternalToolCreate {
+  name: string;
+  description: string;
+  tool_type: string;
+  category?: string;
+  requires_credential?: boolean;
+  required_credential_type?: number;
+  input_schema?: Record<string, any>;
+  output_schema?: Record<string, any>;
+  configuration?: Record<string, any>;
+  is_enabled?: boolean;
+}
+
 export interface AgentToolCreate {
   agent: number;
   tool: number;
@@ -381,6 +410,11 @@ export interface ConversationMessage {
   content: string;
 }
 
+export interface InternalToolAttachment {
+  tool_id: number;
+  credential_id: number;
+}
+
 export interface AgentTestRequest {
   test_type: AgentTestType;
   credential_id: number;
@@ -389,6 +423,7 @@ export interface AgentTestRequest {
   message?: string;  // For unstructured tests
   conversation_history?: ConversationMessage[];  // For unstructured tests
   mcp_server_ids?: number[];  // Optional MCP server IDs for ad-hoc attachment
+  internal_tool_attachments?: InternalToolAttachment[];  // Optional internal tool attachments
 }
 
 export interface AgentTestResponse {

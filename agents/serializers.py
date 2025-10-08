@@ -1,6 +1,10 @@
 from rest_framework import serializers
 from django.db import transaction
-from .models import Agent, Prompt, Tool, AgentTool, MCPServer, MCPToolDefinition, AgentMCPServer
+from .models import (
+    Agent, Prompt, Tool, AgentTool,
+    MCPServer, MCPToolDefinition, AgentMCPServer,
+    InternalTool, AgentInternalTool
+)
 
 
 class PromptSerializer(serializers.ModelSerializer):
@@ -173,6 +177,12 @@ class AgentCompleteCreateSerializer(serializers.ModelSerializer):
         return agent
 
 
+class InternalToolAttachmentSerializer(serializers.Serializer):
+    """Serializer for internal tool attachment (tool + credential pair)"""
+    tool_id = serializers.IntegerField(required=True)
+    credential_id = serializers.IntegerField(required=True)
+
+
 class AgentTestRequestSerializer(serializers.Serializer):
     """Serializer for agent test requests"""
     test_type = serializers.ChoiceField(choices=['structured', 'unstructured'], required=True)
@@ -208,6 +218,14 @@ class AgentTestRequestSerializer(serializers.Serializer):
         required=False,
         allow_empty=True,
         help_text="Optional list of MCP server IDs to attach for this test"
+    )
+
+    # Optional internal tool attachments for ad-hoc attachment
+    internal_tool_attachments = serializers.ListField(
+        child=InternalToolAttachmentSerializer(),
+        required=False,
+        allow_empty=True,
+        help_text="Optional list of internal tool attachments (tool_id + credential_id pairs)"
     )
 
     def validate(self, data):
@@ -320,3 +338,103 @@ class AgentMCPServerSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         validated_data['created_by'] = self.context['request'].user
         return super().create(validated_data)
+
+
+# ============================================================================
+# Internal Tool Serializers
+# ============================================================================
+
+class InternalToolSerializer(serializers.ModelSerializer):
+    """Serializer for InternalTool model"""
+    required_credential_type_name = serializers.CharField(
+        source='required_credential_type.type_name',
+        read_only=True,
+        allow_null=True
+    )
+    required_credential_category = serializers.CharField(
+        source='required_credential_type.category.name',
+        read_only=True,
+        allow_null=True
+    )
+
+    class Meta:
+        model = InternalTool
+        fields = [
+            'id', 'name', 'description', 'tool_type', 'category',
+            'requires_credential', 'required_credential_type',
+            'required_credential_type_name', 'required_credential_category',
+            'input_schema', 'output_schema', 'configuration', 'is_enabled',
+            'created_at', 'updated_at', 'created_by', 'is_active'
+        ]
+        read_only_fields = [
+            'id', 'created_at', 'updated_at', 'created_by',
+            'required_credential_type_name', 'required_credential_category'
+        ]
+
+    def create(self, validated_data):
+        validated_data['created_by'] = self.context['request'].user
+        return super().create(validated_data)
+
+
+class InternalToolListSerializer(serializers.ModelSerializer):
+    """Lightweight serializer for listing internal tools"""
+    required_credential_type_name = serializers.CharField(
+        source='required_credential_type.type_name',
+        read_only=True,
+        allow_null=True
+    )
+
+    class Meta:
+        model = InternalTool
+        fields = [
+            'id', 'name', 'description', 'tool_type', 'category',
+            'requires_credential', 'required_credential_type_name',
+            'is_enabled', 'created_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'required_credential_type_name']
+
+
+class AgentInternalToolSerializer(serializers.ModelSerializer):
+    """Serializer for AgentInternalTool relationship"""
+    tool_name = serializers.CharField(source='tool.name', read_only=True)
+    tool_type = serializers.CharField(source='tool.tool_type', read_only=True)
+    tool_category = serializers.CharField(source='tool.category', read_only=True)
+    credential_name = serializers.CharField(source='credential.name', read_only=True)
+    credential_type = serializers.CharField(
+        source='credential.credential_type.type_name',
+        read_only=True
+    )
+
+    class Meta:
+        model = AgentInternalTool
+        fields = [
+            'id', 'agent', 'tool', 'tool_name', 'tool_type', 'tool_category',
+            'credential', 'credential_name', 'credential_type',
+            'configuration_override', 'created_at', 'is_active'
+        ]
+        read_only_fields = [
+            'id', 'created_at', 'tool_name', 'tool_type', 'tool_category',
+            'credential_name', 'credential_type'
+        ]
+
+    def create(self, validated_data):
+        validated_data['created_by'] = self.context['request'].user
+        return super().create(validated_data)
+
+    def validate(self, data):
+        """Validate that credential type matches tool requirement"""
+        tool = data.get('tool')
+        credential = data.get('credential')
+
+        if tool and credential:
+            if tool.requires_credential and tool.required_credential_type:
+                if credential.credential_type != tool.required_credential_type:
+                    raise serializers.ValidationError({
+                        'credential': (
+                            f"Credential type mismatch: Tool '{tool.name}' requires "
+                            f"'{tool.required_credential_type.type_name}', but credential "
+                            f"'{credential.name}' is '{credential.credential_type.type_name}'"
+                        )
+                    })
+
+        return data

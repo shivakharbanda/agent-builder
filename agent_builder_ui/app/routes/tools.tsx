@@ -6,7 +6,7 @@ import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { Input } from '../components/ui/Input';
 import { LoadingState, EmptyState } from '../components/ui/Loading';
-import { useTools } from '../hooks/useAPI';
+import { useInternalTools } from '../hooks/useAPI';
 import { formatRelativeTime } from '../lib/utils';
 import { type MCPServer, type MCPServerCreate } from '../lib/mcpApi';
 import api from '../lib/api';
@@ -21,7 +21,7 @@ export function meta({}: Route.MetaArgs) {
 }
 
 export default function Tools() {
-  const { data: tools, loading: loadingTools } = useTools();
+  const { data: tools, loading: loadingTools } = useInternalTools();
   const [mcpServers, setMcpServers] = useState<MCPServer[]>([]);
   const [loadingMcp, setLoadingMcp] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');

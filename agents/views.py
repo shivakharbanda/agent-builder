@@ -3,13 +3,18 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
-from .models import Agent, Prompt, Tool, AgentTool, MCPServer, MCPToolDefinition, AgentMCPServer
+from .models import (
+    Agent, Prompt, Tool, AgentTool,
+    MCPServer, MCPToolDefinition, AgentMCPServer,
+    InternalTool, AgentInternalTool
+)
 from .serializers import (
     AgentSerializer, AgentListSerializer, PromptSerializer,
     ToolSerializer, AgentToolSerializer, AgentCompleteCreateSerializer,
     AgentTestRequestSerializer, AgentTestResponseSerializer,
     MCPServerSerializer, MCPServerListSerializer, MCPToolDefinitionSerializer,
-    AgentMCPServerSerializer
+    AgentMCPServerSerializer,
+    InternalToolSerializer, InternalToolListSerializer, AgentInternalToolSerializer
 )
 import asyncio
 
@@ -116,6 +121,7 @@ class TestAgentView(APIView):
         credential_id = test_data['credential_id']
         model = test_data.get('model', None)
         mcp_server_ids = test_data.get('mcp_server_ids', None)
+        internal_tool_attachments = test_data.get('internal_tool_attachments', None)
 
         try:
             # Initialize executor
@@ -128,7 +134,8 @@ class TestAgentView(APIView):
                     placeholder_values=inputs,
                     credential_id=credential_id,
                     model=model,
-                    mcp_server_ids=mcp_server_ids
+                    mcp_server_ids=mcp_server_ids,
+                    internal_tool_attachments=internal_tool_attachments
                 )
 
             else:  # unstructured
@@ -143,7 +150,8 @@ class TestAgentView(APIView):
                     credential_id=credential_id,
                     conversation_history=conversation_history,
                     model=model,
-                    mcp_server_ids=mcp_server_ids
+                    mcp_server_ids=mcp_server_ids,
+                    internal_tool_attachments=internal_tool_attachments
                 )
 
             # Serialize response
@@ -263,6 +271,114 @@ class AgentMCPServerViewSet(viewsets.ModelViewSet):
     serializer_class = AgentMCPServerSerializer
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['agent', 'mcp_server', 'is_active']
+    ordering_fields = ['created_at']
+    ordering = ['-created_at']
+
+
+# ============================================================================
+# Internal Tool ViewSets
+# ============================================================================
+
+class InternalToolViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing internal tools"""
+    queryset = InternalTool.objects.filter(is_active=True)
+    serializer_class = InternalToolSerializer
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['category', 'tool_type', 'requires_credential', 'is_enabled', 'is_active']
+    search_fields = ['name', 'description', 'tool_type']
+    ordering_fields = ['name', 'category', 'created_at']
+    ordering = ['category', 'name']
+
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return InternalToolListSerializer
+        return InternalToolSerializer
+
+    @action(detail=False, methods=['get'])
+    def registry(self, request):
+        """Get all tools registered in the tool registry"""
+        from agents.tools import get_all_tool_metadata
+
+        try:
+            tools_metadata = get_all_tool_metadata()
+            return Response({
+                'tools': tools_metadata,
+                'count': len(tools_metadata)
+            })
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['post'])
+    def test_execute(self, request, pk=None):
+        """Test tool execution with given credential and inputs"""
+        from agents.tools import get_tool
+
+        tool = self.get_object()
+
+        # Get test parameters
+        credential_id = request.data.get('credential_id')
+        inputs = request.data.get('inputs', {})
+
+        if not credential_id:
+            return Response(
+                {'error': 'credential_id is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Get credential
+        try:
+            from credentials.models import Credential
+            credential = Credential.objects.get(id=credential_id, is_active=True, is_deleted=False)
+        except Credential.DoesNotExist:
+            return Response(
+                {'error': f'Credential {credential_id} not found or inactive'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Validate credential type
+        if tool.requires_credential and tool.required_credential_type:
+            if credential.credential_type != tool.required_credential_type:
+                return Response(
+                    {
+                        'error': f"Credential type mismatch: Tool requires '{tool.required_credential_type.type_name}', "
+                                f"but credential is '{credential.credential_type.type_name}'"
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        # Execute tool
+        try:
+            tool_class = get_tool(tool.tool_type)
+            result = asyncio.run(tool_class.execute(credential, **inputs))
+
+            return Response({
+                'success': True,
+                'result': result,
+                'tool': tool.name,
+                'inputs': inputs
+            })
+
+        except KeyError:
+            return Response(
+                {'error': f"Tool type '{tool.tool_type}' not found in registry"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {'error': f'Tool execution failed: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class AgentInternalToolViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing agent-internal tool relationships"""
+    queryset = AgentInternalTool.objects.filter(is_active=True)
+    serializer_class = AgentInternalToolSerializer
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['agent', 'tool', 'is_active']
     ordering_fields = ['created_at']
     ordering = ['-created_at']
 

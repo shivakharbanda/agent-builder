@@ -1,6 +1,7 @@
 from django.db import models
 from common.models import BaseModel
 from projects.models import Project
+from credentials.models import Credential, CredentialType
 
 
 class Agent(BaseModel):
@@ -146,3 +147,71 @@ class AgentMCPServer(BaseModel):
     class Meta:
         db_table = 'agents_agent_mcp_server'
         unique_together = [['agent', 'mcp_server']]
+
+
+class InternalTool(BaseModel):
+    """
+    Internal tools that can be used in agents or workflows.
+
+    Internal tools are Python-based tools with credential injection support.
+    They can be used in two modes:
+    1. Agent Mode: Passed to PydanticAI agents as callable tools
+    2. Workflow Node Mode: Executed directly as workflow nodes
+    """
+    name = models.CharField(max_length=200, unique=True, help_text="Display name for UI")
+    description = models.TextField(help_text="What this tool does")
+    tool_type = models.CharField(max_length=100, help_text="Registry key (e.g., 'serp_api')")
+    category = models.CharField(max_length=100, default='general', help_text="Tool category")
+
+    # Credential requirements
+    requires_credential = models.BooleanField(default=False)
+    required_credential_type = models.ForeignKey(
+        CredentialType,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='internal_tools',
+        help_text="Type of credential required (e.g., SERP API)"
+    )
+
+    # Schemas for validation and UI
+    input_schema = models.JSONField(default=dict, help_text="JSON schema for tool inputs")
+    output_schema = models.JSONField(default=dict, help_text="JSON schema for tool outputs")
+
+    # Configuration
+    configuration = models.JSONField(default=dict, blank=True, help_text="Tool-specific configuration")
+    is_enabled = models.BooleanField(default=True, help_text="Whether tool is available for use")
+
+    def __str__(self):
+        return f"{self.name} ({self.tool_type})"
+
+    class Meta:
+        db_table = 'agents_internal_tool'
+        ordering = ['category', 'name']
+
+
+class AgentInternalTool(BaseModel):
+    """
+    Many-to-many relationship between agents and internal tools.
+
+    Links agents to internal tools with specific credentials.
+    Allows multiple agents to use the same tool with different credentials.
+    """
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name='internal_tools')
+    tool = models.ForeignKey(InternalTool, on_delete=models.CASCADE, related_name='agent_assignments')
+    credential = models.ForeignKey(
+        Credential,
+        on_delete=models.CASCADE,
+        related_name='tool_assignments',
+        help_text="Credential to use with this tool"
+    )
+
+    # Optional per-agent configuration overrides
+    configuration_override = models.JSONField(default=dict, blank=True)
+
+    def __str__(self):
+        return f"{self.agent.name} - {self.tool.name} (via {self.credential.name})"
+
+    class Meta:
+        db_table = 'agents_agent_internal_tool'
+        unique_together = [['agent', 'tool']]
