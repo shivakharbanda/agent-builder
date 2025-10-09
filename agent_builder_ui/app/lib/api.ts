@@ -633,6 +633,11 @@ class AgentBuilderAPI {
     return response.data;
   }
 
+  async triggerWorkflowViaChat(workflowId: number, userMessage: string): Promise<{execution_id: number, session_id: string, status: string}> {
+    const response = await this.client.post(`/workflows/${workflowId}/trigger/chat/`, { user_message: userMessage });
+    return response.data;
+  }
+
   async getExecutionStatus(executionId: number): Promise<any> {
     const response = await this.client.get(`/workflows/executions/${executionId}/status/`);
     return response.data;

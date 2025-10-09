@@ -47,15 +47,26 @@ class NodeFactory:
         from .script import ScriptNode
         from .conditional import ConditionalNode
         from .internal_tool import InternalToolNode
+        from .trigger_manual import ManualTriggerNode
+        from .trigger_schedule import ScheduleTriggerNode
+        from .trigger_chat import ChatTriggerNode
 
         cls.NODE_REGISTRY = {
+            # Trigger nodes
+            'trigger_manual': ManualTriggerNode,
+            'trigger_schedule': ScheduleTriggerNode,
+            'trigger_chat': ChatTriggerNode,
+            # Data source nodes
             'database': DatabaseNode,
+            # Processor nodes
             'agent': AgentNode,
-            'output': OutputNode,
             'filter': FilterNode,
             'script': ScriptNode,
-            'conditional': ConditionalNode,
             'internal_tool': InternalToolNode,
+            # Control flow nodes
+            'conditional': ConditionalNode,
+            # Data sink nodes
+            'output': OutputNode,
         }
 
     @classmethod
@@ -76,7 +87,7 @@ class NodeFactory:
 
         Args:
             node_id: Database ID of the node
-            node_type: Type of node (database, agent, output, filter, script, conditional)
+            node_type: Type of node (trigger_manual, trigger_schedule, trigger_chat, database, agent, output, filter, script, conditional, internal_tool)
             configuration: Node configuration dictionary
             workflow_id: ID of parent workflow
             execution_id: ID of current execution

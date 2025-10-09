@@ -35,6 +35,11 @@ def seed_node_registry():
 
     categories_data = [
         {
+            'name': 'trigger',
+            'description': 'Nodes that define how workflows are initiated and triggered',
+            'icon': 'play_circle'
+        },
+        {
             'name': 'data_source',
             'description': 'Nodes that retrieve or generate data from external sources',
             'icon': 'database'
@@ -74,6 +79,29 @@ def seed_node_registry():
     # ========================================================================
 
     node_types_data = [
+        # Trigger Nodes
+        {
+            'category': 'trigger',
+            'type_name': 'trigger_manual',
+            'type_description': 'Manual workflow trigger - starts workflow via button click or API call',
+            'icon': 'play_circle',
+            'handler_class_name': 'ManualTriggerNode'
+        },
+        {
+            'category': 'trigger',
+            'type_name': 'trigger_schedule',
+            'type_description': 'Scheduled workflow trigger - runs workflow on a cron schedule',
+            'icon': 'schedule',
+            'handler_class_name': 'ScheduleTriggerNode'
+        },
+        {
+            'category': 'trigger',
+            'type_name': 'trigger_chat',
+            'type_description': 'Chat workflow trigger - starts workflow from user chat messages',
+            'icon': 'chat',
+            'handler_class_name': 'ChatTriggerNode'
+        },
+        # Data Source Nodes
         {
             'category': 'data_source',
             'type_name': 'database',

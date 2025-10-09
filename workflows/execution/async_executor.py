@@ -158,6 +158,10 @@ def _execute_full_workflow(execution: WorkflowExecution):
     """
     Execute entire workflow (all nodes in topological order).
 
+    Workflow execution flow:
+    1. Find and execute trigger node first (if present)
+    2. Execute remaining nodes in order, passing data from trigger
+
     Args:
         execution: WorkflowExecution instance with execution_type='full_workflow'
     """
@@ -189,9 +193,79 @@ def _execute_full_workflow(execution: WorkflowExecution):
         completed_nodes = 0
         node_results = {}  # Store results for passing between nodes
 
-        # Execute nodes in order (simple sequential for now)
-        # TODO: Later implement topological sort based on edges
-        for node in nodes:
+        # Separate trigger nodes from other nodes
+        trigger_node_types = ['trigger_manual', 'trigger_schedule', 'trigger_chat']
+        trigger_nodes = [n for n in nodes if n.node_type in trigger_node_types]
+        processing_nodes = [n for n in nodes if n.node_type not in trigger_node_types]
+
+        # Execute trigger node first (if present)
+        trigger_results = None
+        if trigger_nodes:
+            trigger_node = trigger_nodes[0]  # Use first trigger node (should only be one)
+
+            execution.current_node_id = trigger_node.id
+            execution.progress_message = f'Executing trigger: {trigger_node.node_type}...'
+            execution.progress_percentage = (completed_nodes / total_nodes) * 100
+            execution.save()
+
+            # Update triggered_by based on trigger node type
+            if trigger_node.node_type == 'trigger_manual':
+                execution.triggered_by = 'manual'
+            elif trigger_node.node_type == 'trigger_schedule':
+                execution.triggered_by = 'schedule'
+            elif trigger_node.node_type == 'trigger_chat':
+                execution.triggered_by = 'chat'
+            execution.save()
+
+            # Create NodeExecution record for trigger
+            node_exec = NodeExecution.objects.create(
+                workflow_execution=execution,
+                node_id=trigger_node.id,
+                node_type=trigger_node.node_type,
+                status='running',
+                started_at=timezone.now()
+            )
+
+            try:
+                # Create and execute trigger node
+                trigger_instance = NodeFactory.create_node(
+                    node_id=trigger_node.id,
+                    node_type=trigger_node.node_type,
+                    configuration=trigger_node.configuration,
+                    workflow_id=execution.workflow.id,
+                    execution_id=execution.id,
+                    position=trigger_node.position
+                )
+
+                # Execute trigger (no input data)
+                trigger_results = trigger_instance.run()
+
+                # Store trigger results
+                node_results[trigger_node.id] = trigger_results
+
+                # Update node execution
+                node_exec.status = 'completed'
+                node_exec.completed_at = timezone.now()
+                node_exec.results = trigger_results
+                node_exec.execution_time_seconds = (
+                    node_exec.completed_at - node_exec.started_at
+                ).total_seconds()
+                node_exec.save()
+
+                completed_nodes += 1
+
+            except Exception as e:
+                import traceback
+
+                node_exec.status = 'failed'
+                node_exec.error_message = str(e)
+                node_exec.completed_at = timezone.now()
+                node_exec.save()
+
+                raise Exception(f"Trigger node {trigger_node.id} ({trigger_node.node_type}) failed: {str(e)}")
+
+        # Execute remaining nodes in order
+        for node in processing_nodes:
             execution.current_node_id = node.id
             execution.progress_message = f'Executing {node.node_type} node (position {node.position})...'
             execution.progress_percentage = (completed_nodes / total_nodes) * 100
@@ -218,10 +292,16 @@ def _execute_full_workflow(execution: WorkflowExecution):
                 )
 
                 # Determine input data based on node type
-                processor_node_types = ['agent', 'filter', 'script', 'conditional', 'output']
-                if node.node_type in processor_node_types and node_results:
-                    # Use results from previous node
-                    input_data = list(node_results.values())[-1] if node_results else None
+                processor_node_types = ['agent', 'filter', 'script', 'conditional', 'output', 'internal_tool']
+                if node.node_type in processor_node_types:
+                    # If this is the first processing node after trigger, use trigger results
+                    # Otherwise use results from previous node
+                    if trigger_results and not any(n.id in node_results for n in processing_nodes[:processing_nodes.index(node)]):
+                        input_data = trigger_results
+                    elif node_results:
+                        input_data = list(node_results.values())[-1]
+                    else:
+                        input_data = None
                 else:
                     input_data = None
 
@@ -260,7 +340,8 @@ def _execute_full_workflow(execution: WorkflowExecution):
         execution.progress_message = f'Workflow completed successfully ({completed_nodes} nodes)'
         execution.execution_log = {
             'total_nodes': total_nodes,
-            'completed_nodes': completed_nodes
+            'completed_nodes': completed_nodes,
+            'had_trigger': len(trigger_nodes) > 0
         }
         execution.save()
 

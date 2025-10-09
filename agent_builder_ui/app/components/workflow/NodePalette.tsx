@@ -6,6 +6,29 @@ export function NodePalette() {
 
   const nodeCategories = [
     {
+      title: 'Triggers',
+      nodes: [
+        {
+          type: 'trigger_manual',
+          icon: 'play_circle',
+          label: 'Manual',
+          description: 'Run manually'
+        },
+        {
+          type: 'trigger_schedule',
+          icon: 'schedule',
+          label: 'Schedule',
+          description: 'Run on schedule'
+        },
+        {
+          type: 'trigger_chat',
+          icon: 'chat',
+          label: 'Chat',
+          description: 'Start via chat'
+        }
+      ]
+    },
+    {
       title: 'Data',
       nodes: [
         {

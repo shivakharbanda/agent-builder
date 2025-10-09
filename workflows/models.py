@@ -82,6 +82,7 @@ class WorkflowExecution(BaseModel):
         ('schedule', 'Scheduled'),
         ('api', 'API'),
         ('webhook', 'Webhook'),
+        ('chat', 'Chat'),
     ]
 
     EXECUTION_TYPE_CHOICES = [
@@ -305,4 +306,64 @@ class WorkflowBuilderSession(BaseModel):
         indexes = [
             models.Index(fields=['session_id', 'is_active']),
             models.Index(fields=['created_by', 'project']),
+        ]
+
+
+class WorkflowChatConversation(BaseModel):
+    """
+    Store chat-triggered workflow conversations.
+
+    When workflows have a chat trigger node, user messages are stored here
+    and linked to the resulting workflow execution.
+    """
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('processing', 'Processing'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+    ]
+
+    workflow = models.ForeignKey(
+        Workflow,
+        on_delete=models.CASCADE,
+        related_name='chat_conversations',
+        help_text="Workflow this chat conversation belongs to"
+    )
+    session_id = models.UUIDField(
+        unique=True,
+        db_index=True,
+        help_text="Unique chat session identifier"
+    )
+    user_message = models.TextField(
+        help_text="User's chat message that triggered the workflow"
+    )
+    workflow_execution = models.ForeignKey(
+        WorkflowExecution,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='chat_conversations',
+        help_text="Linked workflow execution (if created)"
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='pending',
+        help_text="Status of chat conversation processing"
+    )
+    response_data = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Structured response data from workflow execution"
+    )
+
+    def __str__(self):
+        return f"Chat for {self.workflow.name} - {self.status} ({self.created_at})"
+
+    class Meta:
+        db_table = 'workflows_chat_conversation'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['workflow', 'status']),
+            models.Index(fields=['session_id']),
         ]

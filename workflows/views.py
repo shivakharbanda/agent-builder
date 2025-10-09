@@ -2,10 +2,10 @@ from rest_framework import viewsets, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
-from .models import DataSource, Workflow, WorkflowProperties, WorkflowExecution, WorkflowNode, PlaceholderMapping, OutputNode
+from .models import DataSource, Workflow, WorkflowProperties, WorkflowExecution, WorkflowNode, PlaceholderMapping, OutputNode, WorkflowChatConversation
 from .serializers import (
     DataSourceSerializer, WorkflowSerializer, WorkflowListSerializer, WorkflowPropertiesSerializer, WorkflowExecutionSerializer,
-    WorkflowNodeSerializer, PlaceholderMappingSerializer, OutputNodeSerializer
+    WorkflowNodeSerializer, PlaceholderMappingSerializer, OutputNodeSerializer, WorkflowChatConversationSerializer
 )
 from .execution.handler import WorkflowHandler
 
@@ -106,13 +106,29 @@ class WorkflowViewSet(viewsets.ModelViewSet):
             execution_type = 'full_workflow'
             target_node_id = None
 
+        # Detect trigger type from workflow configuration
+        # Check if workflow has any trigger nodes
+        trigger_node_types = ['trigger_manual', 'trigger_schedule', 'trigger_chat']
+        nodes = WorkflowNode.objects.filter(workflow=workflow, is_active=True)
+        trigger_nodes = [n for n in nodes if n.node_type in trigger_node_types]
+
+        # Default to manual if no trigger node or if trigger is manual
+        triggered_by = 'manual'
+        if trigger_nodes:
+            trigger_node = trigger_nodes[0]
+            if trigger_node.node_type == 'trigger_schedule':
+                triggered_by = 'schedule'
+            elif trigger_node.node_type == 'trigger_chat':
+                triggered_by = 'chat'
+            # trigger_manual stays as 'manual'
+
         # Create execution record
         execution = WorkflowExecution.objects.create(
             workflow=workflow,
             execution_type=execution_type,
             target_node_id=target_node_id,
             status='pending',
-            triggered_by='manual',
+            triggered_by=triggered_by,
             created_by=request.user
         )
 
@@ -129,7 +145,100 @@ class WorkflowViewSet(viewsets.ModelViewSet):
             'execution_id': execution.id,
             'execution_type': execution_type,
             'status': 'pending',
+            'triggered_by': triggered_by,
             'message': f'{execution_type.replace("_", " ").title()} execution started'
+        }, status=202)
+
+    @action(detail=True, methods=['post'], url_path='trigger/chat')
+    def trigger_via_chat(self, request, pk=None):
+        """
+        Trigger workflow via chat message.
+
+        This endpoint is used for workflows with chat trigger nodes.
+        It creates a chat conversation record and starts workflow execution.
+
+        Request body:
+        - user_message (required): Chat message text
+        - session_id (optional): Existing chat session ID
+
+        Returns:
+        - 202 Accepted with execution_id and session_id
+        """
+        import threading
+        import uuid
+        from workflows.execution.async_executor import execute_workflow_async
+
+        workflow = self.get_object()
+
+        # Validate request data
+        user_message = request.data.get('user_message')
+        if not user_message:
+            return Response({
+                'error': 'user_message is required'
+            }, status=400)
+
+        # Verify workflow has chat trigger node
+        chat_trigger_nodes = WorkflowNode.objects.filter(
+            workflow=workflow,
+            node_type='trigger_chat',
+            is_active=True
+        )
+
+        if not chat_trigger_nodes.exists():
+            return Response({
+                'error': 'Workflow does not have a chat trigger node'
+            }, status=400)
+
+        # Get or create session_id
+        session_id = request.data.get('session_id')
+        if session_id:
+            try:
+                session_id = uuid.UUID(session_id)
+            except ValueError:
+                return Response({
+                    'error': 'Invalid session_id format'
+                }, status=400)
+        else:
+            session_id = uuid.uuid4()
+
+        # Create chat conversation record
+        conversation = WorkflowChatConversation.objects.create(
+            workflow=workflow,
+            session_id=session_id,
+            user_message=user_message,
+            status='pending',
+            created_by=request.user
+        )
+
+        # Create workflow execution
+        execution = WorkflowExecution.objects.create(
+            workflow=workflow,
+            execution_type='full_workflow',
+            status='pending',
+            triggered_by='chat',
+            created_by=request.user
+        )
+
+        # Link conversation to execution
+        conversation.workflow_execution = execution
+        conversation.status = 'processing'
+        conversation.save()
+
+        # Start background execution
+        thread = threading.Thread(
+            target=execute_workflow_async,
+            args=(execution.id,)
+        )
+        thread.daemon = True
+        thread.start()
+
+        # Return immediately
+        return Response({
+            'execution_id': execution.id,
+            'session_id': str(session_id),
+            'conversation_id': conversation.id,
+            'status': 'pending',
+            'message': 'Chat workflow execution started'
         }, status=202)
 
     @action(detail=False, methods=['get'], url_path='executions/(?P<execution_id>[0-9]+)/status')

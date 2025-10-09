@@ -21,6 +21,130 @@ interface WorkflowCanvasProps {
 }
 
 // Custom node components
+
+// Trigger Nodes
+function TriggerManualNode({ data, selected }: { data: any; selected: boolean }) {
+  return (
+    <div className={`bg-[#1a3d2e] p-4 rounded-xl shadow-lg border-2 w-56 relative transition-all group ${
+      selected ? 'border-green-500 shadow-xl shadow-green-500/30' : 'border-green-700/50'
+    }`}>
+      <div className="absolute -top-2 -right-2 bg-green-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+        START
+      </div>
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center">
+          <span className="material-symbols-outlined text-green-400 mr-2 text-2xl">play_circle</span>
+          <h4 className="font-semibold text-white">{data.label || 'Manual Trigger'}</h4>
+        </div>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            data.onDelete?.(data.id);
+          }}
+          className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-400 transition-opacity"
+        >
+          <span className="material-symbols-outlined text-sm">close</span>
+        </button>
+      </div>
+      <p className="text-xs text-gray-300">Run manually via button or API</p>
+      {data.config?.description && (
+        <div className="mt-2 text-xs text-green-300 truncate">{data.config.description}</div>
+      )}
+
+      {/* Output Handle */}
+      <Handle
+        type="source"
+        position={Position.Right}
+        className="w-4 h-4 bg-green-500 border-2 border-white"
+      />
+    </div>
+  );
+}
+
+function TriggerScheduleNode({ data, selected }: { data: any; selected: boolean }) {
+  return (
+    <div className={`bg-[#1a2e42] p-4 rounded-xl shadow-lg border-2 w-56 relative transition-all group ${
+      selected ? 'border-blue-500 shadow-xl shadow-blue-500/30' : 'border-blue-700/50'
+    }`}>
+      <div className="absolute -top-2 -right-2 bg-blue-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+        START
+      </div>
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center">
+          <span className="material-symbols-outlined text-blue-400 mr-2 text-2xl">schedule</span>
+          <h4 className="font-semibold text-white">{data.label || 'Schedule Trigger'}</h4>
+        </div>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            data.onDelete?.(data.id);
+          }}
+          className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-400 transition-opacity"
+        >
+          <span className="material-symbols-outlined text-sm">close</span>
+        </button>
+      </div>
+      <p className="text-xs text-gray-300">Run on recurring schedule</p>
+      {data.config?.schedule && (
+        <div className="mt-2 text-xs text-blue-300 font-mono bg-blue-950/50 px-2 py-1 rounded">
+          {data.config.schedule}
+        </div>
+      )}
+      {data.config?.enabled === false && (
+        <div className="mt-1 text-xs text-yellow-400">⚠️ Schedule disabled</div>
+      )}
+
+      {/* Output Handle */}
+      <Handle
+        type="source"
+        position={Position.Right}
+        className="w-4 h-4 bg-blue-500 border-2 border-white"
+      />
+    </div>
+  );
+}
+
+function TriggerChatNode({ data, selected }: { data: any; selected: boolean }) {
+  return (
+    <div className={`bg-[#2e1a42] p-4 rounded-xl shadow-lg border-2 w-56 relative transition-all group ${
+      selected ? 'border-purple-500 shadow-xl shadow-purple-500/30' : 'border-purple-700/50'
+    }`}>
+      <div className="absolute -top-2 -right-2 bg-purple-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+        START
+      </div>
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center">
+          <span className="material-symbols-outlined text-purple-400 mr-2 text-2xl">chat</span>
+          <h4 className="font-semibold text-white">{data.label || 'Chat Trigger'}</h4>
+        </div>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            data.onDelete?.(data.id);
+          }}
+          className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-400 transition-opacity"
+        >
+          <span className="material-symbols-outlined text-sm">close</span>
+        </button>
+      </div>
+      <p className="text-xs text-gray-300">Start from user chat message</p>
+      {data.config?.welcome_message && (
+        <div className="mt-2 text-xs text-purple-300 italic truncate">
+          "{data.config.welcome_message}"
+        </div>
+      )}
+
+      {/* Output Handle */}
+      <Handle
+        type="source"
+        position={Position.Right}
+        className="w-4 h-4 bg-purple-500 border-2 border-white"
+      />
+    </div>
+  );
+}
+
+// Data Source Nodes
 function DatabaseNode({ data, selected }: { data: any; selected: boolean }) {
   return (
     <div className={`bg-[#1a2633] p-4 rounded-lg shadow-md border-2 w-48 relative transition-all group ${
@@ -149,6 +273,11 @@ function OutputNode({ data, selected }: { data: any; selected: boolean }) {
 }
 
 const nodeTypes = {
+  // Trigger nodes
+  trigger_manual: TriggerManualNode,
+  trigger_schedule: TriggerScheduleNode,
+  trigger_chat: TriggerChatNode,
+  // Data nodes
   database: DatabaseNode,
   agent: AgentNode,
   output: OutputNode,
@@ -242,6 +371,23 @@ export function WorkflowCanvasSimple({ onConfigChange }: WorkflowCanvasProps) {
     event.dataTransfer.dropEffect = 'move';
   }, []);
 
+  // Helper function to get proper node labels
+  const getNodeLabel = (nodeType: string): string => {
+    const labels: Record<string, string> = {
+      trigger_manual: 'Manual Trigger',
+      trigger_schedule: 'Schedule Trigger',
+      trigger_chat: 'Chat Trigger',
+      database: 'Database',
+      agent: 'Agent',
+      output: 'Output',
+      filter: 'Filter',
+      script: 'Script',
+      conditional: 'Conditional',
+      internal_tool: 'Internal Tool',
+    };
+    return labels[nodeType] || nodeType;
+  };
+
   const onDrop = useCallback(
     (event: React.DragEvent) => {
       event.preventDefault();
@@ -264,7 +410,7 @@ export function WorkflowCanvasSimple({ onConfigChange }: WorkflowCanvasProps) {
         type,
         position,
         data: {
-          label: `${type.charAt(0).toUpperCase() + type.slice(1)} Node`,
+          label: getNodeLabel(type),
           onDelete: deleteNode,
           onConfigChange: updateNodeConfig,
           id: nodeId,
@@ -280,6 +426,24 @@ export function WorkflowCanvasSimple({ onConfigChange }: WorkflowCanvasProps) {
   // Get default config for node type
   const getDefaultConfig = (nodeType: string) => {
     switch (nodeType) {
+      case 'trigger_manual':
+        return {
+          description: '',
+          initial_data: ''
+        };
+      case 'trigger_schedule':
+        return {
+          schedule: '0 9 * * *',
+          timezone: 'UTC',
+          enabled: true,
+          description: ''
+        };
+      case 'trigger_chat':
+        return {
+          welcome_message: 'Hi! Send me a message to start the workflow.',
+          context_instructions: '',
+          description: ''
+        };
       case 'database':
         return {
           connectionString: '',

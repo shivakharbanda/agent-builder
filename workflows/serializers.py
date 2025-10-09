@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import DataSource, Workflow, WorkflowProperties, WorkflowExecution, WorkflowNode, PlaceholderMapping, OutputNode
+from .models import DataSource, Workflow, WorkflowProperties, WorkflowExecution, WorkflowNode, PlaceholderMapping, OutputNode, WorkflowChatConversation
 
 
 class DataSourceSerializer(serializers.ModelSerializer):
@@ -66,6 +66,26 @@ class WorkflowExecutionSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at', 'created_by']
 
     def create(self, validated_data):
+        validated_data['created_by'] = self.context['request'].user
+        return super().create(validated_data)
+
+
+class WorkflowChatConversationSerializer(serializers.ModelSerializer):
+    workflow_name = serializers.CharField(source='workflow.name', read_only=True)
+    execution_status = serializers.CharField(source='workflow_execution.status', read_only=True)
+
+    class Meta:
+        model = WorkflowChatConversation
+        fields = [
+            'id', 'workflow', 'workflow_name', 'session_id', 'user_message',
+            'workflow_execution', 'execution_status', 'status', 'response_data',
+            'created_at', 'updated_at', 'created_by'
+        ]
+        read_only_fields = ['id', 'session_id', 'created_at', 'updated_at', 'created_by', 'workflow_name', 'execution_status']
+
+    def create(self, validated_data):
+        import uuid
+        validated_data['session_id'] = uuid.uuid4()
         validated_data['created_by'] = self.context['request'].user
         return super().create(validated_data)
 

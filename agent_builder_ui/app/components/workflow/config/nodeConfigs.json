@@ -1,4 +1,150 @@
 {
+  "trigger_manual": {
+    "name": "Manual Trigger",
+    "description": "Start workflow manually via button click or API call",
+    "icon": "play_circle",
+    "category": "trigger",
+    "fields": [
+      {
+        "name": "description",
+        "type": "textarea",
+        "label": "Description",
+        "placeholder": "Describe when to run this workflow manually...",
+        "required": false,
+        "rows": 2,
+        "help": "Human-readable description of when to trigger this workflow"
+      },
+      {
+        "name": "initial_data",
+        "type": "code_editor",
+        "label": "Initial Data (JSON)",
+        "placeholder": "{\"key\": \"value\"}",
+        "required": false,
+        "rows": 6,
+        "help": "Optional JSON data to pass to downstream nodes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "data",
+        "type": "any",
+        "description": "Initial data or execution metadata"
+      }
+    ]
+  },
+  "trigger_schedule": {
+    "name": "Schedule Trigger",
+    "description": "Run workflow on a recurring schedule",
+    "icon": "schedule",
+    "category": "trigger",
+    "fields": [
+      {
+        "name": "description",
+        "type": "textarea",
+        "label": "Description",
+        "placeholder": "Describe this scheduled workflow...",
+        "required": false,
+        "rows": 2,
+        "help": "Human-readable description of the schedule"
+      },
+      {
+        "name": "schedule",
+        "type": "text",
+        "label": "Cron Expression",
+        "placeholder": "0 9 * * * (Daily at 9am)",
+        "required": true,
+        "help": "Cron syntax: minute hour day month weekday. Examples: '0 9 * * *' (9am daily), '*/15 * * * *' (every 15 min)"
+      },
+      {
+        "name": "timezone",
+        "type": "select",
+        "label": "Timezone",
+        "placeholder": "Select timezone",
+        "required": false,
+        "options": [
+          {"value": "UTC", "label": "UTC"},
+          {"value": "America/New_York", "label": "Eastern Time (US)"},
+          {"value": "America/Chicago", "label": "Central Time (US)"},
+          {"value": "America/Denver", "label": "Mountain Time (US)"},
+          {"value": "America/Los_Angeles", "label": "Pacific Time (US)"},
+          {"value": "Europe/London", "label": "London (GMT/BST)"},
+          {"value": "Europe/Paris", "label": "Paris (CET/CEST)"},
+          {"value": "Asia/Tokyo", "label": "Tokyo (JST)"},
+          {"value": "Asia/Shanghai", "label": "Shanghai (CST)"},
+          {"value": "Australia/Sydney", "label": "Sydney (AEST/AEDT)"}
+        ],
+        "default": "UTC",
+        "help": "Timezone for schedule execution"
+      },
+      {
+        "name": "enabled",
+        "type": "checkbox",
+        "label": "Enable Schedule",
+        "required": false,
+        "default": true,
+        "help": "Toggle to enable/disable scheduled execution"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "data",
+        "type": "any",
+        "description": "Execution metadata with schedule info"
+      }
+    ]
+  },
+  "trigger_chat": {
+    "name": "Chat Trigger",
+    "description": "Start workflow from user chat messages",
+    "icon": "chat",
+    "category": "trigger",
+    "fields": [
+      {
+        "name": "welcome_message",
+        "type": "textarea",
+        "label": "Welcome Message",
+        "placeholder": "Hi! Send me a message to start the workflow...",
+        "required": true,
+        "rows": 3,
+        "help": "Initial message shown to users when they open the chat"
+      },
+      {
+        "name": "context_instructions",
+        "type": "textarea",
+        "label": "Processing Instructions",
+        "placeholder": "How to interpret and process user input...",
+        "required": false,
+        "rows": 4,
+        "help": "Instructions for how downstream nodes should process the chat input"
+      },
+      {
+        "name": "description",
+        "type": "textarea",
+        "label": "Description",
+        "placeholder": "Describe this chat-triggered workflow...",
+        "required": false,
+        "rows": 2,
+        "help": "Human-readable description of the workflow"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "user_input",
+        "type": "string",
+        "description": "User's chat message"
+      },
+      {
+        "name": "session_id",
+        "type": "string",
+        "description": "Chat session identifier"
+      },
+      {
+        "name": "parsed_data",
+        "type": "object",
+        "description": "Structured data extracted from message"
+      }
+    ]
+  },
   "database": {
     "name": "Database",
     "description": "Connects to your database to read data",

@@ -35,6 +35,7 @@ export default function CreateWorkflow() {
   const [activeTab, setActiveTab] = useState<'manual' | 'chat'>('manual');
   const [workflowName, setWorkflowName] = useState('Untitled Workflow');
   const [workflowDescription, setWorkflowDescription] = useState('');
+  const [savedWorkflowId, setSavedWorkflowId] = useState<number | null>(params.id ? parseInt(params.id) : null);
   const [workflowConfig, setWorkflowConfig] = useState<WorkflowConfig>({
     nodes: [],
     edges: [],
@@ -233,6 +234,9 @@ export default function CreateWorkflow() {
 
       // Reset unsaved changes flag after successful save
       setHasUnsavedChanges(false);
+
+      // Update saved workflow ID
+      setSavedWorkflowId(savedWorkflow.id);
 
       // Navigate based on mode
       if (isEditMode) {
@@ -509,6 +513,7 @@ export default function CreateWorkflow() {
                 isLoading={isLoadingWorkflow}
                 onExecuteNode={handleExecuteNode}
                 nodeExecutionCache={nodeExecutionCache}
+                workflowId={savedWorkflowId}
               />
             </WorkflowErrorBoundary>
           </main>

@@ -17,7 +17,11 @@ import '@xyflow/react/dist/style.css';
 import type { WorkflowConfig } from './types';
 import { NodeConfigModal } from './NodeConfigModal';
 import { WorkflowPropertiesModal } from './WorkflowPropertiesModal';
+import { WorkflowTriggerChat } from './WorkflowTriggerChat';
 import { Button } from '../ui/Button';
+import { api } from '../../lib/api';
+import { useToast } from '../../hooks/useToast';
+import { ToastContainer } from '../ui/Toast';
 
 interface WorkflowCanvasProps {
   onConfigChange?: (config: WorkflowConfig) => void;
@@ -25,9 +29,212 @@ interface WorkflowCanvasProps {
   isLoading?: boolean;
   onExecuteNode?: (nodeId: string) => void;
   nodeExecutionCache?: Record<string, any>;
+  workflowId?: number | null;
 }
 
 // Custom node components
+
+// Trigger Nodes
+function TriggerManualNode({ data, selected }: { data: any; selected: boolean }) {
+  const [executing, setExecuting] = useState(false);
+
+  const handleExecute = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!data.workflowId || executing) return;
+
+    setExecuting(true);
+    try {
+      await data.onExecuteTrigger?.(data.workflowId);
+    } finally {
+      setExecuting(false);
+    }
+  };
+
+  return (
+    <div className={`bg-[#1a3d2e] p-4 rounded-xl shadow-lg border-2 w-56 relative transition-all group ${
+      selected ? 'border-green-500 shadow-xl shadow-green-500/30' : 'border-green-700/50'
+    }`}>
+      <div className="absolute -top-2 -right-2 bg-green-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+        START
+      </div>
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center">
+          <span className="material-symbols-outlined text-green-400 mr-2 text-2xl">play_circle</span>
+          <h4 className="font-semibold text-white text-sm">{data.label || 'Manual Trigger'}</h4>
+        </div>
+        <div className="flex space-x-1">
+          <button
+            onClick={handleExecute}
+            disabled={!data.workflowId || executing}
+            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-green-400 transition-opacity disabled:opacity-30 disabled:cursor-not-allowed"
+            title={data.workflowId ? "Execute workflow" : "Save workflow first"}
+          >
+            <span className="material-symbols-outlined text-sm">{executing ? 'hourglass_empty' : 'play_arrow'}</span>
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              data.onConfig?.(data.id, 'trigger_manual', data);
+            }}
+            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-green-400 transition-opacity"
+            title="Configure node"
+          >
+            <span className="material-symbols-outlined text-sm">settings</span>
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              data.onDelete?.(data.id);
+            }}
+            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-400 transition-opacity"
+            title="Delete node"
+          >
+            <span className="material-symbols-outlined text-sm">close</span>
+          </button>
+        </div>
+      </div>
+      <p className="text-xs text-gray-300">Run manually via button or API</p>
+      {data.config?.description && (
+        <div className="mt-2 text-xs text-green-300 truncate">{data.config.description}</div>
+      )}
+      {executing && (
+        <div className="mt-2 text-xs text-green-400 animate-pulse">⚡ Executing...</div>
+      )}
+
+      {/* Output Handle */}
+      <Handle
+        type="source"
+        position={Position.Right}
+        className="w-4 h-4 bg-green-500 border-2 border-white"
+      />
+    </div>
+  );
+}
+
+function TriggerScheduleNode({ data, selected }: { data: any; selected: boolean }) {
+  return (
+    <div className={`bg-[#1a2e42] p-4 rounded-xl shadow-lg border-2 w-56 relative transition-all group ${
+      selected ? 'border-blue-500 shadow-xl shadow-blue-500/30' : 'border-blue-700/50'
+    }`}>
+      <div className="absolute -top-2 -right-2 bg-blue-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+        START
+      </div>
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center">
+          <span className="material-symbols-outlined text-blue-400 mr-2 text-2xl">schedule</span>
+          <h4 className="font-semibold text-white">{data.label || 'Schedule Trigger'}</h4>
+        </div>
+        <div className="flex space-x-1">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              data.onConfig?.(data.id, 'trigger_schedule', data);
+            }}
+            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-blue-400 transition-opacity"
+            title="Configure node"
+          >
+            <span className="material-symbols-outlined text-sm">settings</span>
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              data.onDelete?.(data.id);
+            }}
+            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-400 transition-opacity"
+            title="Delete node"
+          >
+            <span className="material-symbols-outlined text-sm">close</span>
+          </button>
+        </div>
+      </div>
+      <p className="text-xs text-gray-300">Run on recurring schedule</p>
+      {data.config?.schedule && (
+        <div className="mt-2 text-xs text-blue-300 font-mono bg-blue-950/50 px-2 py-1 rounded">
+          {data.config.schedule}
+        </div>
+      )}
+      {data.config?.enabled === false && (
+        <div className="mt-1 text-xs text-yellow-400">⚠️ Schedule disabled</div>
+      )}
+
+      {/* Output Handle */}
+      <Handle
+        type="source"
+        position={Position.Right}
+        className="w-4 h-4 bg-blue-500 border-2 border-white"
+      />
+    </div>
+  );
+}
+
+function TriggerChatNode({ data, selected }: { data: any; selected: boolean }) {
+  const handleOpenChat = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!data.workflowId) return;
+    data.onOpenChat?.(data.config?.welcome_message);
+  };
+
+  return (
+    <div className={`bg-[#2e1a42] p-4 rounded-xl shadow-lg border-2 w-56 relative transition-all group ${
+      selected ? 'border-purple-500 shadow-xl shadow-purple-500/30' : 'border-purple-700/50'
+    }`}>
+      <div className="absolute -top-2 -right-2 bg-purple-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+        START
+      </div>
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center">
+          <span className="material-symbols-outlined text-purple-400 mr-2 text-2xl">chat</span>
+          <h4 className="font-semibold text-white text-sm">{data.label || 'Chat Trigger'}</h4>
+        </div>
+        <div className="flex space-x-1">
+          <button
+            onClick={handleOpenChat}
+            disabled={!data.workflowId}
+            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-purple-400 transition-opacity disabled:opacity-30 disabled:cursor-not-allowed"
+            title={data.workflowId ? "Open chat" : "Save workflow first"}
+          >
+            <span className="material-symbols-outlined text-sm">forum</span>
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              data.onConfig?.(data.id, 'trigger_chat', data);
+            }}
+            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-purple-400 transition-opacity"
+            title="Configure node"
+          >
+            <span className="material-symbols-outlined text-sm">settings</span>
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              data.onDelete?.(data.id);
+            }}
+            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-400 transition-opacity"
+            title="Delete node"
+          >
+            <span className="material-symbols-outlined text-sm">close</span>
+          </button>
+        </div>
+      </div>
+      <p className="text-xs text-gray-300">Start from user chat message</p>
+      {data.config?.welcome_message && (
+        <div className="mt-2 text-xs text-purple-300 italic truncate">
+          "{data.config.welcome_message}"
+        </div>
+      )}
+
+      {/* Output Handle */}
+      <Handle
+        type="source"
+        position={Position.Right}
+        className="w-4 h-4 bg-purple-500 border-2 border-white"
+      />
+    </div>
+  );
+}
+
+// Data Source Nodes
 function DatabaseNode({ data, selected }: { data: any; selected: boolean }) {
   return (
     <div className={`bg-[#1a2633] p-4 rounded-lg shadow-md border-2 w-48 relative transition-all group ${
@@ -417,6 +624,11 @@ function ConditionalNode({ data, selected }: { data: any; selected: boolean }) {
 }
 
 const nodeTypes = {
+  // Trigger nodes
+  trigger_manual: TriggerManualNode,
+  trigger_schedule: TriggerScheduleNode,
+  trigger_chat: TriggerChatNode,
+  // Data nodes
   database: DatabaseNode,
   agent: AgentNode,
   output: OutputNode,
@@ -425,10 +637,17 @@ const nodeTypes = {
   conditional: ConditionalNode,
 };
 
-export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExecuteNode, nodeExecutionCache }: WorkflowCanvasProps) {
+export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExecuteNode, nodeExecutionCache, workflowId }: WorkflowCanvasProps) {
   // React Flow manages node/edge arrays internally
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+
+  // Toast notifications
+  const { toasts, showToast, removeToast } = useToast();
+
+  // Chat state
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatWelcomeMessage, setChatWelcomeMessage] = useState<string>('');
 
   // Node configuration modal state
   const [configModal, setConfigModal] = useState<{
@@ -473,6 +692,45 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExe
   const [propertiesModal, setPropertiesModal] = useState({
     isOpen: false
   });
+
+  // Trigger execution handlers (defined before useEffect to avoid initialization errors)
+  const handleExecuteTrigger = useCallback(async (triggerWorkflowId: number) => {
+    try {
+      const result = await api.executeWorkflow(triggerWorkflowId);
+      showToast(`Workflow execution started (ID: ${result.execution_id})`, 'success');
+    } catch (error: any) {
+      showToast(error.detail || 'Failed to execute workflow', 'error');
+    }
+  }, [showToast]);
+
+  const handleOpenChat = useCallback((welcomeMsg?: string) => {
+    setChatWelcomeMessage(welcomeMsg || 'Hi! Send me a message to start the workflow.');
+    setChatOpen(true);
+  }, []);
+
+  const handleCloseChat = useCallback(() => {
+    setChatOpen(false);
+  }, []);
+
+  // Node configuration handlers (defined before useEffect to avoid initialization errors)
+  const handleNodeConfig = useCallback((nodeId: string, nodeType: string, nodeData: any) => {
+    setConfigModal({
+      isOpen: true,
+      nodeId,
+      nodeType,
+      nodeData,
+      edges: edges,
+      nodes: nodes,
+      executionCache: nodeExecutionCache || {},
+    });
+  }, [edges, nodes, nodeExecutionCache]);
+
+  const handleNodeDelete = useCallback((nodeId: string) => {
+    setNodes((nodes) => nodes.filter((node) => node.id !== nodeId));
+    setEdges((edges) => edges.filter((edge) =>
+      edge.source !== nodeId && edge.target !== nodeId
+    ));
+  }, [setNodes, setEdges]);
 
   // Simple one-time initialization
   const [initialized, setInitialized] = useState(false);
@@ -520,6 +778,9 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExe
             onConfig: handleNodeConfig,
             onDelete: handleNodeDelete,
             onExecute: onExecuteNode,
+            workflowId: workflowId,
+            onExecuteTrigger: handleExecuteTrigger,
+            onOpenChat: handleOpenChat,
           }
         };
 
@@ -552,7 +813,7 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExe
     }
 
     setInitialized(true);
-  }, [initialConfig, hasInitialized, isLoading]);
+  }, [initialConfig, hasInitialized, isLoading, handleNodeConfig, handleNodeDelete, onExecuteNode, workflowId, handleExecuteTrigger, handleOpenChat]);
 
   // Only notify parent when nodes/edges change directly - no state sync
   useEffect(() => {
@@ -590,26 +851,6 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExe
 
   // Set initial viewport to prevent zoom issues
   const defaultViewport = { x: 0, y: 0, zoom: 0.8 };
-
-  // Node configuration handlers
-  const handleNodeConfig = useCallback((nodeId: string, nodeType: string, nodeData: any) => {
-    setConfigModal({
-      isOpen: true,
-      nodeId,
-      nodeType,
-      nodeData,
-      edges: edges,
-      nodes: nodes,
-      executionCache: nodeExecutionCache || {},
-    });
-  }, [edges, nodes, nodeExecutionCache]);
-
-  const handleNodeDelete = useCallback((nodeId: string) => {
-    setNodes((nodes) => nodes.filter((node) => node.id !== nodeId));
-    setEdges((edges) => edges.filter((edge) =>
-      edge.source !== nodeId && edge.target !== nodeId
-    ));
-  }, [setNodes, setEdges]);
 
   const openNodeConfig = useCallback((nodeId: string, nodeType: string, nodeData: any) => {
     setConfigModal({
@@ -753,18 +994,39 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExe
           onConfigChange: updateNodeConfig,
           onExecute: onExecuteNode,
           id: nodeId,
-          config: getDefaultConfig(type)
+          config: getDefaultConfig(type),
+          workflowId: workflowId,
+          onExecuteTrigger: handleExecuteTrigger,
+          onOpenChat: handleOpenChat,
         },
       };
 
       setNodes((nds) => nds.concat(newNode));
     },
-    [setNodes, deleteNode, openNodeConfig, updateNodeConfig]
+    [setNodes, deleteNode, openNodeConfig, updateNodeConfig, onExecuteNode, workflowId, handleExecuteTrigger, handleOpenChat]
   );
 
   // Get default config for node type
   const getDefaultConfig = (nodeType: string) => {
     switch (nodeType) {
+      case 'trigger_manual':
+        return {
+          description: '',
+          initial_data: ''
+        };
+      case 'trigger_schedule':
+        return {
+          schedule: '0 9 * * *',
+          timezone: 'UTC',
+          enabled: true,
+          description: ''
+        };
+      case 'trigger_chat':
+        return {
+          welcome_message: 'Hi! Send me a message to start the workflow.',
+          context_instructions: '',
+          description: ''
+        };
       case 'database':
         return {
           connectionString: '',
@@ -808,21 +1070,23 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExe
   };
 
   return (
-    <div className="w-full h-full relative">
-      {/* Workflow Toolbar */}
-      <div className="absolute top-4 left-4 z-50 flex gap-2">
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={openPropertiesModal}
-          leftIcon={<span className="material-symbols-outlined text-sm">settings</span>}
-          className="bg-[#1a2633] border-[#374151] text-white hover:bg-[#233648]"
-        >
-          Properties
-        </Button>
-      </div>
+    <div className="w-full h-full flex">
+      {/* Canvas Container */}
+      <div className={`relative transition-all ${chatOpen ? 'w-[65%]' : 'w-full'}`}>
+        {/* Workflow Toolbar */}
+        <div className="absolute top-4 left-4 z-50 flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={openPropertiesModal}
+            leftIcon={<span className="material-symbols-outlined text-sm">settings</span>}
+            className="bg-[#1a2633] border-[#374151] text-white hover:bg-[#233648]"
+          >
+            Properties
+          </Button>
+        </div>
 
-      <ReactFlow
+        <ReactFlow
         nodes={nodes}
         edges={edges}
         onNodesChange={onNodesChange}
@@ -912,13 +1176,28 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExe
         onExecuteNode={onExecuteNode}
       />
 
-      {/* Workflow Properties Modal */}
-      <WorkflowPropertiesModal
-        isOpen={propertiesModal.isOpen}
-        onClose={closePropertiesModal}
-        onSave={saveWorkflowProperties}
-        initialProperties={workflowConfig.properties}
-      />
+        {/* Workflow Properties Modal */}
+        <WorkflowPropertiesModal
+          isOpen={propertiesModal.isOpen}
+          onClose={closePropertiesModal}
+          onSave={saveWorkflowProperties}
+          initialProperties={workflowConfig.properties}
+        />
+      </div>
+
+      {/* Chat Panel */}
+      {chatOpen && workflowId && (
+        <div className="w-[35%] h-full">
+          <WorkflowTriggerChat
+            workflowId={workflowId}
+            onClose={handleCloseChat}
+            welcomeMessage={chatWelcomeMessage}
+          />
+        </div>
+      )}
+
+      {/* Toast Notifications */}
+      <ToastContainer toasts={toasts} onRemove={removeToast} />
     </div>
   );
 }
