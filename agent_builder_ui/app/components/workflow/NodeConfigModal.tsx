@@ -2,10 +2,10 @@ import { useState, useEffect } from 'react';
 import { Button } from '../ui/Button';
 import { Input, Textarea, Select } from '../ui/Input';
 import nodeConfigs from './config/nodeConfigs.json';
-import { useCredentials, useAgents } from '../../hooks/useAPI';
+import { useCredentials, useAgents, useInternalTools } from '../../hooks/useAPI';
 import { APP_CONFIG } from '../../lib/config';
 import { api } from '../../lib/api';
-import type { AgentCompleteCreate, Agent } from '../../lib/types';
+import type { AgentCompleteCreate, Agent, InternalTool, Credential } from '../../lib/types';
 
 interface NodeConfigModalProps {
   isOpen: boolean;
@@ -614,6 +614,10 @@ export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave, e
   // API hooks for fetching data
   const { data: credentials, loading: credentialsLoading, error: credentialsError } = useCredentials();
   const { data: agents, loading: agentsLoading, error: agentsError, refetch: refetchAgents } = useAgents();
+  const { data: internalToolsData, loading: loadingInternalTools } = useInternalTools();
+
+  // MCP Servers state
+  const [mcpServers, setMcpServers] = useState<any[]>([]);
 
   useEffect(() => {
     // Debug logging
@@ -685,6 +689,22 @@ export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave, e
       });
     }
   }, [isOpen, nodeType, nodeData?.id, edges, nodes, nodeExecutionCache]);
+
+  // Load MCP servers when modal opens
+  useEffect(() => {
+    const loadMcpServers = async () => {
+      try {
+        const response = await api.getMCPServers();
+        setMcpServers(response.results || []);
+      } catch (err) {
+        console.error('Failed to load MCP servers:', err);
+      }
+    };
+
+    if (isOpen) {
+      loadMcpServers();
+    }
+  }, [isOpen]);
 
   // Handler to manually load columns from connected database nodes
   const handleLoadColumns = async () => {
@@ -853,7 +873,41 @@ export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave, e
     });
   };
 
-  // Get grouped column options from all incoming database nodes
+  // Helper: Get available fields from trigger nodes based on their type
+  const getTriggerFields = (triggerNode: any): string[] => {
+    const triggerType = triggerNode.type;
+
+    switch (triggerType) {
+      case 'trigger_chat':
+        return ['user_input', 'session_id', 'timestamp', '_trigger.type', '_trigger.session_id', '_trigger.description'];
+
+      case 'trigger_manual':
+        // Try to parse initial_data from config to get dynamic fields
+        const initialData = triggerNode.data?.config?.initial_data;
+        const baseFields = ['_trigger.type', '_trigger.description'];
+
+        if (initialData) {
+          try {
+            const parsed = typeof initialData === 'string' ? JSON.parse(initialData) : initialData;
+            if (typeof parsed === 'object' && !Array.isArray(parsed)) {
+              // Extract top-level keys from initial_data object
+              return [...Object.keys(parsed), ...baseFields];
+            }
+          } catch (e) {
+            console.log('[getTriggerFields] Failed to parse initial_data:', e);
+          }
+        }
+        return baseFields;
+
+      case 'trigger_schedule':
+        return ['_trigger.executed_at', '_trigger.schedule', '_trigger.timezone', '_trigger.type', '_trigger.description'];
+
+      default:
+        return [];
+    }
+  };
+
+  // Get grouped column options from all incoming data source nodes (database + triggers)
   const getGroupedColumnOptions = () => {
     if (!edges || !nodeData?.id) {
       console.log('[getGroupedColumnOptions] Missing edges or nodeData.id:', { edges, nodeDataId: nodeData?.id });
@@ -890,57 +944,77 @@ export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave, e
       const sourceNodeId = edge.source;
       const sourceNode = nodes?.find((n: any) => n.id === sourceNodeId);
       const sourceLabel = sourceNode?.data?.label || sourceNode?.data?.config?.label || 'Unknown Source';
+      const sourceType = sourceNode?.type;
 
-      // Check manually loaded columns first, then execution cache
-      const loadedData = loadedColumns[sourceNodeId];
-      const executionResults = nodeExecutionCache?.[sourceNodeId];
-      const executionError = columnLoadingState.errors[sourceNodeId];
+      // Check if this is a trigger node
+      if (sourceType?.startsWith('trigger_')) {
+        // Handle trigger nodes - they provide predefined fields
+        const triggerFields = getTriggerFields(sourceNode);
 
-      if (executionError) {
         groups.push({
           sourceId: sourceNodeId,
-          sourceLabel,
-          columns: [],
-          hasResults: false,
-          error: executionError
-        });
-      } else if (loadedData && loadedData.columns.length > 0) {
-        // Use manually loaded columns
-        groups.push({
-          sourceId: sourceNodeId,
-          sourceLabel: loadedData.sourceLabel,
-          columns: loadedData.columns.map(col => ({
-            value: `${sourceNodeId}.${col}`,
-            label: col
+          sourceLabel: `${sourceLabel} (Trigger)`,
+          columns: triggerFields.map(field => ({
+            value: `${sourceNodeId}.${field}`,
+            label: field
           })),
-          hasResults: true
+          hasResults: true,
+          nodeType: 'trigger'
         });
-      } else if (executionResults && executionResults.length > 0) {
-        // Use execution cache columns
-        const columnNames = Object.keys(executionResults[0]);
-        groups.push({
-          sourceId: sourceNodeId,
-          sourceLabel,
-          columns: columnNames.map(col => ({
-            value: `${sourceNodeId}.${col}`,
-            label: col
-          })),
-          hasResults: true
-        });
-      } else if (columnLoadingState.executingNodes.has(sourceNodeId)) {
-        groups.push({
-          sourceId: sourceNodeId,
-          sourceLabel,
-          columns: [],
-          hasResults: false
-        });
-      } else {
-        groups.push({
-          sourceId: sourceNodeId,
-          sourceLabel,
-          columns: [],
-          hasResults: false
-        });
+      } else if (sourceType === 'database') {
+        // Handle database nodes - check manually loaded columns first, then execution cache
+        const loadedData = loadedColumns[sourceNodeId];
+        const executionResults = nodeExecutionCache?.[sourceNodeId];
+        const executionError = columnLoadingState.errors[sourceNodeId];
+
+        if (executionError) {
+          groups.push({
+            sourceId: sourceNodeId,
+            sourceLabel,
+            columns: [],
+            hasResults: false,
+            error: executionError
+          });
+        } else if (loadedData && loadedData.columns.length > 0) {
+          // Use manually loaded columns
+          groups.push({
+            sourceId: sourceNodeId,
+            sourceLabel: loadedData.sourceLabel,
+            columns: loadedData.columns.map(col => ({
+              value: `${sourceNodeId}.${col}`,
+              label: col
+            })),
+            hasResults: true,
+            nodeType: 'database'
+          });
+        } else if (executionResults && executionResults.length > 0) {
+          // Use execution cache columns
+          const columnNames = Object.keys(executionResults[0]);
+          groups.push({
+            sourceId: sourceNodeId,
+            sourceLabel,
+            columns: columnNames.map(col => ({
+              value: `${sourceNodeId}.${col}`,
+              label: col
+            })),
+            hasResults: true,
+            nodeType: 'database'
+          });
+        } else if (columnLoadingState.executingNodes.has(sourceNodeId)) {
+          groups.push({
+            sourceId: sourceNodeId,
+            sourceLabel,
+            columns: [],
+            hasResults: false
+          });
+        } else {
+          groups.push({
+            sourceId: sourceNodeId,
+            sourceLabel,
+            columns: [],
+            hasResults: false
+          });
+        }
       }
     });
 
@@ -1339,7 +1413,7 @@ export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave, e
             ) : !hasConnections ? (
               <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-3 text-orange-400 text-sm flex items-start gap-2">
                 <span className="material-symbols-outlined text-sm mt-0.5">warning</span>
-                <span>No database nodes connected to this agent. Connect a database node first.</span>
+                <span>No data sources connected. Connect a database or trigger node to this agent.</span>
               </div>
             ) : isLoadingColumns ? (
               <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3">
@@ -1358,12 +1432,12 @@ export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave, e
               </div>
             ) : (
               <div>
-                {/* Load Columns Button */}
-                {groups.every(g => !g.hasResults) && Object.keys(loadedColumns).length === 0 && (
+                {/* Load Columns Button (only for database nodes) */}
+                {groups.some(g => g.nodeType === 'database' && !g.hasResults) && (
                   <div className="mb-4 bg-blue-500/10 border border-blue-500/20 rounded-lg p-4">
                     <p className="text-sm text-blue-400 mb-3 flex items-center gap-2">
                       <span className="material-symbols-outlined text-sm">info</span>
-                      <span>Click below to load columns from connected database nodes</span>
+                      <span>Click below to load columns from connected database nodes (trigger fields are always available)</span>
                     </p>
                     <button
                       type="button"
@@ -1476,7 +1550,7 @@ export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave, e
                 <div className="mt-3 bg-[#0a1219] border border-[#374151] rounded-lg p-3">
                   <p className="text-xs text-gray-400 flex items-center gap-1">
                     <span className="material-symbols-outlined text-xs">info</span>
-                    Columns are automatically fetched from connected database nodes
+                    Fields are automatically fetched from connected data sources (database columns, trigger fields)
                   </p>
                 </div>
               </div>
@@ -1487,6 +1561,185 @@ export function NodeConfigModal({ isOpen, onClose, nodeType, nodeData, onSave, e
             )}
             {fieldError && (
               <p className="text-red-400 text-xs mt-1">{fieldError}</p>
+            )}
+          </div>
+        );
+
+      case 'internal_tool_multi_select':
+        // Internal Tools multi-select (button + credential dropdown pairs)
+        const internalTools = internalToolsData?.results || [];
+        const allCredentials = credentials?.results || [];
+
+        // Field value is stored as array of {tool_id, credential_id} objects
+        const selectedToolAttachments = (fieldValue as Array<{tool_id: number, credential_id: number}>) || [];
+
+        // Helper: Get credentials filtered by tool requirements
+        const getCredentialsForTool = (tool: InternalTool): Credential[] => {
+          if (!tool.requires_credential || !tool.required_credential_type) {
+            return allCredentials;
+          }
+          return allCredentials.filter(
+            cred => cred.credential_type === tool.required_credential_type
+          );
+        };
+
+        // Helper: Check if tool is selected
+        const isToolSelected = (toolId: number) => {
+          return selectedToolAttachments.some(att => att.tool_id === toolId);
+        };
+
+        // Helper: Get selected credential ID for a tool
+        const getSelectedCredentialId = (toolId: number): number => {
+          const attachment = selectedToolAttachments.find(att => att.tool_id === toolId);
+          return attachment?.credential_id || 0;
+        };
+
+        // Helper: Toggle tool selection
+        const toggleInternalTool = (toolId: number, tool: InternalTool) => {
+          if (isToolSelected(toolId)) {
+            // Remove tool
+            const newAttachments = selectedToolAttachments.filter(att => att.tool_id !== toolId);
+            handleFieldChange(field.name, newAttachments);
+          } else {
+            // Add tool with auto-selected credential
+            const matchingCreds = getCredentialsForTool(tool);
+            const defaultCredId = matchingCreds.length > 0 ? matchingCreds[0].id : 0;
+            const newAttachments = [...selectedToolAttachments, { tool_id: toolId, credential_id: defaultCredId }];
+            handleFieldChange(field.name, newAttachments);
+          }
+        };
+
+        // Helper: Update credential for a tool
+        const updateInternalToolCredential = (toolId: number, credentialId: number) => {
+          const newAttachments = selectedToolAttachments.map(att =>
+            att.tool_id === toolId ? { ...att, credential_id: credentialId } : att
+          );
+          handleFieldChange(field.name, newAttachments);
+        };
+
+        return (
+          <div key={field.name} className="mb-4">
+            <label className="block text-sm font-medium text-white mb-2">
+              {field.label}
+              {field.required && <span className="text-red-400 ml-1">*</span>}
+            </label>
+            {loadingInternalTools ? (
+              <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 text-blue-400 text-sm">
+                Loading internal tools...
+              </div>
+            ) : internalTools.length === 0 ? (
+              <div className="bg-gray-500/10 border border-gray-500/20 rounded-lg p-3 text-gray-400 text-sm">
+                No internal tools found. Please configure internal tools first.
+              </div>
+            ) : (
+              <>
+                <div className="space-y-3">
+                  {internalTools.map(tool => {
+                    const isSelected = isToolSelected(tool.id);
+                    const selectedCredId = getSelectedCredentialId(tool.id);
+                    const availableCreds = getCredentialsForTool(tool);
+
+                    return (
+                      <div key={tool.id} className="flex items-start gap-3">
+                        <button
+                          type="button"
+                          onClick={() => toggleInternalTool(tool.id, tool)}
+                          className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors flex-shrink-0 ${
+                            isSelected
+                              ? 'bg-[#f59e0b] text-white'
+                              : 'bg-[#233648] text-gray-300 hover:bg-[#2d4a5f]'
+                          }`}
+                        >
+                          {tool.name}
+                        </button>
+                        {isSelected && (
+                          <div className="flex-1">
+                            <select
+                              value={selectedCredId}
+                              onChange={(e) => updateInternalToolCredential(tool.id, parseInt(e.target.value))}
+                              className="w-full bg-[#111a22] border border-[#374151] rounded-md px-3 py-1.5 text-white text-sm focus:border-[#f59e0b] focus:outline-none"
+                            >
+                              <option value={0}>Select credential</option>
+                              {availableCreds.map(cred => (
+                                <option key={cred.id} value={cred.id}>
+                                  {cred.name} ({cred.credential_type_name || 'Unknown Type'})
+                                </option>
+                              ))}
+                            </select>
+                            {availableCreds.length === 0 && (
+                              <p className="text-yellow-400 text-xs mt-1">
+                                ⚠️ No matching credentials found. Create a {tool.required_credential_type_name} credential.
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-gray-500 text-xs mt-2">
+                  Select internal tools and their credentials. {selectedToolAttachments.length} selected.
+                </p>
+              </>
+            )}
+            {fieldError && (
+              <p className="text-red-400 text-xs mt-1">{fieldError}</p>
+            )}
+            {field.help && (
+              <p className="text-gray-400 text-xs mt-1">{field.help}</p>
+            )}
+          </div>
+        );
+
+      case 'mcp_server_multi_select':
+        // MCP Server multi-select (chip-based buttons)
+        const selectedMcpServerIds = (fieldValue as number[]) || [];
+
+        const toggleMcpServer = (serverId: number) => {
+          const newSelection = selectedMcpServerIds.includes(serverId)
+            ? selectedMcpServerIds.filter(id => id !== serverId)
+            : [...selectedMcpServerIds, serverId];
+          handleFieldChange(field.name, newSelection);
+        };
+
+        return (
+          <div key={field.name} className="mb-4">
+            <label className="block text-sm font-medium text-white mb-2">
+              {field.label}
+              {field.required && <span className="text-red-400 ml-1">*</span>}
+            </label>
+            {mcpServers.length === 0 ? (
+              <div className="bg-gray-500/10 border border-gray-500/20 rounded-lg p-3 text-gray-400 text-sm">
+                No MCP servers found. Please register MCP servers in the Tools section.
+              </div>
+            ) : (
+              <>
+                <div className="flex flex-wrap gap-2">
+                  {mcpServers.map(server => (
+                    <button
+                      key={server.id}
+                      type="button"
+                      onClick={() => toggleMcpServer(server.id)}
+                      className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                        selectedMcpServerIds.includes(server.id)
+                          ? 'bg-[#f59e0b] text-white'
+                          : 'bg-[#233648] text-gray-300 hover:bg-[#2d4a5f]'
+                      }`}
+                    >
+                      {server.name}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-gray-500 text-xs mt-2">
+                  Select MCP servers to attach to this agent. {selectedMcpServerIds.length} selected.
+                </p>
+              </>
+            )}
+            {fieldError && (
+              <p className="text-red-400 text-xs mt-1">{fieldError}</p>
+            )}
+            {field.help && (
+              <p className="text-gray-400 text-xs mt-1">{field.help}</p>
             )}
           </div>
         );

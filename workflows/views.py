@@ -294,6 +294,17 @@ class WorkflowViewSet(viewsets.ModelViewSet):
                     response['node_type'] = node_exec.node_type
                     response['execution_time'] = node_exec.execution_time_seconds
 
+            # Add chat response if this is a chat-triggered workflow
+            if execution.triggered_by == 'chat' and execution.status == 'completed':
+                try:
+                    conversation = WorkflowChatConversation.objects.get(
+                        workflow_execution=execution
+                    )
+                    if conversation.response_data:
+                        response['chat_response'] = conversation.response_data.get('bot_response')
+                except WorkflowChatConversation.DoesNotExist:
+                    pass
+
             return Response(response)
 
         except WorkflowExecution.DoesNotExist:

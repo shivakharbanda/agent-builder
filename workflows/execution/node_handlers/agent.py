@@ -6,9 +6,10 @@ Processes data using configured AI agents.
 """
 
 from typing import Any
+import re
 from .base import BaseNode
 from agents.services.agent_executor import AgentExecutor
-from agents.models import Agent
+from agents.models import Agent, Prompt
 
 
 class AgentNode(BaseNode):
@@ -167,8 +168,19 @@ class AgentNode(BaseNode):
         if not input_data:
             return []
 
-        # Handle new structured format: {'data': [...], 'context': {...}}
-        if isinstance(input_data, dict) and 'data' in input_data:
+        # Detect input data format
+        # Check if input is from trigger (has _trigger metadata)
+        is_trigger_data = isinstance(input_data, dict) and '_trigger' in input_data
+
+        if is_trigger_data:
+            # Trigger nodes return single objects - wrap in array for uniform processing
+            trigger_type = input_data.get('_trigger', {}).get('type', 'unknown')
+            print(f"\n[AGENT NODE DEBUG] Trigger input detected: {trigger_type}")
+            print(f"  - Available fields: {list(input_data.keys())}")
+            data_rows = [input_data]  # Wrap single object as 1-row array
+            context_row = {}
+        elif isinstance(input_data, dict) and 'data' in input_data:
+            # Structured format from database: {'data': [...], 'context': {...}}
             data_rows = input_data.get('data', [])
             context_row = input_data.get('context', {})
             print(f"\n[AGENT NODE DEBUG] Received structured input:")
@@ -203,14 +215,32 @@ class AgentNode(BaseNode):
             # Extract mapped values from record
             agent_input = {}
             for placeholder, column_ref in input_mapping.items():
-                # column_ref format: "node_1.column_name" or just "column_name"
-                column_name = column_ref.split('.')[-1] if '.' in column_ref else column_ref
+                # column_ref format can be:
+                # - "node_1.column_name" (database column)
+                # - "node_1.user_input" (trigger field)
+                # - "node_1._trigger.type" (nested trigger field)
 
-                # Get value from record
-                if column_name in record:
-                    agent_input[placeholder] = record[column_name]
+                # Remove node prefix (everything before first dot)
+                if '.' in column_ref:
+                    parts = column_ref.split('.', 1)  # Split only on first dot
+                    field_path = parts[1]  # Get everything after node_id
                 else:
-                    agent_input[placeholder] = None
+                    field_path = column_ref
+
+                # Handle nested paths (e.g., "_trigger.type")
+                if '.' in field_path:
+                    # Navigate nested structure
+                    value = record
+                    for part in field_path.split('.'):
+                        if isinstance(value, dict) and part in value:
+                            value = value[part]
+                        else:
+                            value = None
+                            break
+                    agent_input[placeholder] = value
+                else:
+                    # Simple field access
+                    agent_input[placeholder] = record.get(field_path)
 
             mapped_data.append({
                 'original_record': record,
@@ -280,8 +310,29 @@ class AgentNode(BaseNode):
 
                 else:
                     # Unstructured agent - returns text response
+                    # Load agent prompts and substitute placeholders
+                    prompts = Prompt.objects.filter(agent=agent, is_active=True)
+                    user_prompt_template = ""
+                    for prompt in prompts:
+                        if prompt.prompt_type == 'user':
+                            user_prompt_template = prompt.content
+                            break
+
+                    # Substitute placeholders in the user prompt
+                    # Pattern: {{placeholder}} -> value from placeholder_values
+                    def replace_placeholder(match):
+                        placeholder_name = match.group(1)
+                        return str(placeholder_values.get(placeholder_name, f"{{{{{placeholder_name}}}}}"))
+
+                    substituted_message = re.sub(r'\{\{(\w+)\}\}', replace_placeholder, user_prompt_template)
+
+                    print(f"[AGENT NODE DEBUG] Unstructured agent prompt substitution:")
+                    print(f"  - Template: {user_prompt_template[:200]}")
+                    print(f"  - Placeholder values: {placeholder_values}")
+                    print(f"  - Substituted message: {substituted_message[:200]}")
+
                     result = executor.execute_unstructured(
-                        message=str(placeholder_values),  # Convert dict to string
+                        message=substituted_message,
                         credential_id=int(llm_credential_id),
                         conversation_history=None,  # No conversation context in workflows
                         model=model if model else None,

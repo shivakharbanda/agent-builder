@@ -5,7 +5,7 @@ import { Button } from '../ui/Button';
 
 interface Message {
   id: string;
-  type: 'user' | 'status' | 'result' | 'error';
+  type: 'user' | 'status' | 'result' | 'error' | 'bot';
   content: string;
   data?: any;
   timestamp: Date;
@@ -53,13 +53,24 @@ export function WorkflowTriggerChat({ workflowId, onClose, welcomeMessage }: Wor
         const status = await api.getExecutionStatus(execId);
 
         if (status.status === 'completed') {
-          setMessages(prev => [...prev, {
-            id: `result-${execId}`,
-            type: 'result',
-            content: 'Workflow completed successfully',
-            data: status.execution_log || status.results,
-            timestamp: new Date()
-          }]);
+          // Check if this is a chat-triggered workflow with bot response
+          if (status.chat_response) {
+            setMessages(prev => [...prev, {
+              id: `bot-${execId}`,
+              type: 'bot',
+              content: status.chat_response,
+              timestamp: new Date()
+            }]);
+          } else {
+            // Fallback to result message for non-chat workflows
+            setMessages(prev => [...prev, {
+              id: `result-${execId}`,
+              type: 'result',
+              content: 'Workflow completed successfully',
+              data: status.execution_log || status.results,
+              timestamp: new Date()
+            }]);
+          }
           setIsLoading(false);
           setExecutionId(null);
           if (pollingRef.current) clearInterval(pollingRef.current);
@@ -197,6 +208,24 @@ export function WorkflowTriggerChat({ workflowId, onClose, welcomeMessage }: Wor
               <span className="text-xs text-gray-400 mt-2 block">
                 {message.timestamp.toLocaleTimeString()}
               </span>
+            </div>
+          </div>
+        );
+
+      case 'bot':
+        return (
+          <div key={message.id} className="flex justify-start">
+            <div className="bg-[#111a22] border border-[#374151] rounded-lg px-4 py-3 max-w-[85%]">
+              <div className="flex items-start gap-2 mb-1">
+                <span className="material-symbols-outlined text-purple-400 text-lg">smart_toy</span>
+                <span className="text-xs font-medium text-purple-400">Workflow Assistant</span>
+              </div>
+              <div className="ml-7">
+                <p className="text-sm text-gray-200 whitespace-pre-wrap">{message.content}</p>
+                <span className="text-xs text-gray-400 mt-2 block">
+                  {message.timestamp.toLocaleTimeString()}
+                </span>
+              </div>
             </div>
           </div>
         );

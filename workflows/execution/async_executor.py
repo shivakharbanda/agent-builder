@@ -345,6 +345,10 @@ def _execute_full_workflow(execution: WorkflowExecution):
         }
         execution.save()
 
+        # If this was a chat-triggered workflow, update conversation with response
+        if execution.triggered_by == 'chat':
+            _update_chat_conversation_with_response(execution, node_results)
+
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
@@ -494,3 +498,167 @@ def _get_upstream_data(workflow, target_node_id):
         # Backward compatibility: return data results directly
         print(f"\n[FINAL RETURN DEBUG] Returning backward-compatible list ({len(data_results) if data_results else 0} rows)\n")
         return data_results if data_results else None
+
+
+def _update_chat_conversation_with_response(execution: WorkflowExecution, node_results: dict):
+    """
+    Update WorkflowChatConversation with bot response extracted from workflow results.
+
+    This function is called after a chat-triggered workflow completes successfully.
+    It extracts the final output from the workflow and saves it back to the conversation.
+
+    Args:
+        execution: WorkflowExecution instance (must have triggered_by='chat')
+        node_results: Dictionary of {node_id: results} from workflow execution
+
+    Workflow structure for chat:
+        trigger_chat -> agent (with toolbox) -> [optional output node]
+
+    The bot response is extracted from:
+        1. Output node (if present) - final formatted output
+        2. Agent node (if no output) - agent's response directly
+        3. Last non-trigger node as fallback
+    """
+    from workflows.models import WorkflowChatConversation
+
+    try:
+        # Find the conversation for this execution
+        conversation = WorkflowChatConversation.objects.get(
+            workflow_execution=execution
+        )
+
+        print(f"\n[CHAT RESPONSE] Extracting bot response for conversation {conversation.id}")
+        print(f"[CHAT RESPONSE] Node results available: {list(node_results.keys())}")
+
+        # Extract bot response from results
+        bot_response = _extract_bot_response(node_results, execution)
+
+        # Update conversation with response
+        conversation.response_data = {
+            'bot_response': bot_response,
+            'execution_id': execution.id,
+            'completed_at': execution.completed_at.isoformat() if execution.completed_at else None,
+            'node_count': len(node_results)
+        }
+        conversation.status = 'completed'
+        conversation.save()
+
+        print(f"[CHAT RESPONSE] Successfully saved bot response to conversation")
+        print(f"[CHAT RESPONSE] Response preview: {str(bot_response)[:200]}")
+
+    except WorkflowChatConversation.DoesNotExist:
+        print(f"[CHAT RESPONSE] ERROR: No conversation found for execution {execution.id}")
+    except Exception as e:
+        import traceback
+        print(f"[CHAT RESPONSE] ERROR: Failed to update conversation: {str(e)}")
+        traceback.print_exc()
+
+
+def _extract_bot_response(node_results: dict, execution: WorkflowExecution) -> str:
+    """
+    Extract bot response from workflow node results.
+
+    Extraction strategy:
+    1. Look for output node - if present, use its formatted output
+    2. Look for agent node - extract response based on agent type:
+       - Unstructured: 'agent_response' field
+       - Structured: JSON output fields
+    3. Fallback to last non-trigger node results
+
+    Args:
+        node_results: Dictionary of {node_id: results}
+        execution: WorkflowExecution instance for context
+
+    Returns:
+        str: Formatted bot response for display in chat
+    """
+    from workflows.models import WorkflowNode
+
+    if not node_results:
+        return "Workflow completed with no output."
+
+    # Get all nodes to identify their types
+    nodes = WorkflowNode.objects.filter(
+        workflow=execution.workflow,
+        is_active=True
+    )
+
+    # Create mapping of node_id -> node_type
+    node_type_map = {node.id: node.node_type for node in nodes}
+
+    # Strategy 1: Look for output node
+    output_nodes = [
+        (node_id, results)
+        for node_id, results in node_results.items()
+        if node_type_map.get(node_id) == 'output'
+    ]
+
+    if output_nodes:
+        output_node_id, output_results = output_nodes[0]
+        print(f"[EXTRACT RESPONSE] Found output node {output_node_id}")
+        # Output node typically saves data and returns success message
+        # We'll use the actual saved data or a confirmation message
+        if isinstance(output_results, dict):
+            return output_results.get('message', str(output_results))
+        return str(output_results)
+
+    # Strategy 2: Look for agent node
+    agent_nodes = [
+        (node_id, results)
+        for node_id, results in node_results.items()
+        if node_type_map.get(node_id) == 'agent'
+    ]
+
+    if agent_nodes:
+        agent_node_id, agent_results = agent_nodes[0]
+        print(f"[EXTRACT RESPONSE] Found agent node {agent_node_id}")
+
+        # Agent results are typically a list of processed records
+        if isinstance(agent_results, list) and len(agent_results) > 0:
+            first_result = agent_results[0]
+
+            # Check for unstructured agent response
+            if 'agent_response' in first_result:
+                response = first_result['agent_response']
+                print(f"[EXTRACT RESPONSE] Extracted unstructured agent response")
+                return response
+
+            # Check for structured agent response (multiple fields)
+            # Exclude metadata and original input fields
+            exclude_keys = ['_agent_metadata', '_trigger', 'user_input', 'session_id', 'timestamp']
+            response_fields = {
+                k: v for k, v in first_result.items()
+                if k not in exclude_keys
+            }
+
+            if response_fields:
+                print(f"[EXTRACT RESPONSE] Extracted structured agent response with fields: {list(response_fields.keys())}")
+                # Format structured response nicely
+                import json
+                return json.dumps(response_fields, indent=2)
+
+        # If agent results are not in expected format, return as string
+        return str(agent_results)
+
+    # Strategy 3: Fallback - use last non-trigger node
+    trigger_types = ['trigger_manual', 'trigger_schedule', 'trigger_chat']
+    non_trigger_results = [
+        (node_id, results)
+        for node_id, results in node_results.items()
+        if node_type_map.get(node_id) not in trigger_types
+    ]
+
+    if non_trigger_results:
+        last_node_id, last_results = non_trigger_results[-1]
+        print(f"[EXTRACT RESPONSE] Using fallback - last non-trigger node {last_node_id}")
+
+        if isinstance(last_results, dict):
+            import json
+            return json.dumps(last_results, indent=2)
+        elif isinstance(last_results, list):
+            import json
+            return json.dumps(last_results, indent=2)
+        return str(last_results)
+
+    # Final fallback
+    return "Workflow completed successfully."
