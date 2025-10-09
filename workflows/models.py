@@ -330,9 +330,8 @@ class WorkflowChatConversation(BaseModel):
         help_text="Workflow this chat conversation belongs to"
     )
     session_id = models.UUIDField(
-        unique=True,
         db_index=True,
-        help_text="Unique chat session identifier"
+        help_text="Chat session identifier (groups messages in same conversation)"
     )
     user_message = models.TextField(
         help_text="User's chat message that triggered the workflow"
@@ -355,6 +354,11 @@ class WorkflowChatConversation(BaseModel):
         default=dict,
         blank=True,
         help_text="Structured response data from workflow execution"
+    )
+    message_history_blob = models.TextField(
+        blank=True,
+        default='',
+        help_text="Serialized PydanticAI ModelMessage history for conversation persistence"
     )
 
     def __str__(self):

@@ -13,7 +13,7 @@ dependencies = [
     "djangorestframework-simplejwt>=5.5.0",
     "fastapi>=0.118.0",
     "uvicorn>=0.37.0",
-    "pydantic-ai>=1.0.11",
+    "pydantic-ai[graph]>=1.0.11",
     "httpx>=0.28.1",
     "aiosqlite>=0.21.0",
     "python-dotenv>=1.1.1",
@@ -21,6 +21,7 @@ dependencies = [
     "psycopg2>=2.9.10",
     "dq-db-manager",
     "mcp>=1.15.0",
+    "pydantic-graph>=1.0.12",
 ]
 
 [tool.uv.sources]

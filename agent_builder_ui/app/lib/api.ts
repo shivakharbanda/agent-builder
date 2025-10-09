@@ -633,8 +633,12 @@ class AgentBuilderAPI {
     return response.data;
   }
 
-  async triggerWorkflowViaChat(workflowId: number, userMessage: string): Promise<{execution_id: number, session_id: string, status: string}> {
-    const response = await this.client.post(`/workflows/${workflowId}/trigger/chat/`, { user_message: userMessage });
+  async triggerWorkflowViaChat(workflowId: number, userMessage: string, sessionId?: string): Promise<{execution_id: number, session_id: string, status: string}> {
+    const payload: any = { user_message: userMessage };
+    if (sessionId) {
+      payload.session_id = sessionId;
+    }
+    const response = await this.client.post(`/workflows/${workflowId}/trigger/chat/`, payload);
     return response.data;
   }
 

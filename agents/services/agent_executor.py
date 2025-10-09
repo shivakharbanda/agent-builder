@@ -18,6 +18,7 @@ from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.mcp import MCPServerSSE, MCPServerStreamableHTTP
+from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 
 from agents.models import Agent, Prompt, AgentMCPServer, MCPServer
 from credentials.models import Credential
@@ -501,7 +502,7 @@ class AgentExecutor:
         self,
         message: str,
         credential_id: int,
-        conversation_history: Optional[List[Dict[str, str]]] = None,
+        message_history: Optional[List[ModelMessage]] = None,
         model: str = None,
         mcp_server_ids: Optional[List[int]] = None,
         internal_tool_attachments: Optional[List[Dict[str, int]]] = None
@@ -512,8 +513,8 @@ class AgentExecutor:
         Args:
             message: User message
             credential_id: ID of LLM credential to use
-            conversation_history: List of previous messages (optional)
-                Format: [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]
+            message_history: List of previous ModelMessage objects (optional)
+                Deserialized from message_history_blob using ModelMessagesTypeAdapter
             model: Optional model name override
             mcp_server_ids: Optional list of MCP server IDs to attach ad-hoc
             internal_tool_attachments: Optional list of internal tool attachments
@@ -523,7 +524,7 @@ class AgentExecutor:
             Dict containing:
                 - success: bool
                 - response: agent text response
-                - conversation_history: updated conversation history
+                - new_messages_json: JSON string of new messages for storage
                 - execution_time_ms: execution time in milliseconds
                 - error: error message if failed (optional)
         """
@@ -565,33 +566,22 @@ class AgentExecutor:
                 tools=internal_tools
             )
 
-            # Build message history for PydanticAI
-            # Note: PydanticAI handles message history differently
-            # For now, we'll concatenate history into the user message
-            if conversation_history:
-                # Build context from history
-                context = "\n\nPrevious conversation:\n"
-                for msg in conversation_history[-10:]:  # Last 10 messages
-                    role = "User" if msg['role'] == 'user' else "Assistant"
-                    context += f"{role}: {msg['content']}\n"
-                full_message = context + f"\nUser: {message}"
-            else:
-                full_message = message
+            # Log message history if provided
+            if message_history:
+                print(f"[AGENT EXECUTOR] Using message_history with {len(message_history)} messages")
 
-            # Execute agent
-            result = pydantic_agent.run_sync(full_message)
+            # Execute agent with message history
+            result = pydantic_agent.run_sync(message, message_history=message_history)
 
-            # Update conversation history
-            updated_history = conversation_history or []
-            updated_history.append({"role": "user", "content": message})
-            updated_history.append({"role": "assistant", "content": result.output})
+            # Get new messages as JSON for storage
+            new_messages_json = result.new_messages_json()
 
             execution_time_ms = int((time.time() - start_time) * 1000)
 
             return {
                 'success': True,
                 'response': result.output,
-                'conversation_history': updated_history,
+                'new_messages_json': new_messages_json,  # JSON string for storage
                 'execution_time_ms': execution_time_ms
             }
 
@@ -613,7 +603,7 @@ class AgentExecutor:
             return {
                 'success': False,
                 'response': None,
-                'conversation_history': conversation_history or [],
+                'new_messages_json': '',
                 'execution_time_ms': execution_time_ms,
                 'error': error_details
             }

@@ -3,6 +3,11 @@ import { api } from '../../lib/api';
 import { Input } from '../ui/Input';
 import { Button } from '../ui/Button';
 
+// Generate a unique session ID using modern browser API
+function generateSessionId(): string {
+  return crypto.randomUUID();
+}
+
 interface Message {
   id: string;
   type: 'user' | 'status' | 'result' | 'error' | 'bot';
@@ -22,6 +27,7 @@ export function WorkflowTriggerChat({ workflowId, onClose, welcomeMessage }: Wor
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [executionId, setExecutionId] = useState<number | null>(null);
+  const [sessionId, setSessionId] = useState<string>(() => generateSessionId());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -126,8 +132,8 @@ export function WorkflowTriggerChat({ workflowId, onClose, welcomeMessage }: Wor
     setIsLoading(true);
 
     try {
-      // Trigger workflow via chat
-      const result = await api.triggerWorkflowViaChat(workflowId, userMessage);
+      // Trigger workflow via chat with session_id to maintain conversation context
+      const result = await api.triggerWorkflowViaChat(workflowId, userMessage, sessionId);
       setExecutionId(result.execution_id);
 
       // Start polling for execution status
@@ -151,6 +157,8 @@ export function WorkflowTriggerChat({ workflowId, onClose, welcomeMessage }: Wor
   };
 
   const handleStartNewChat = () => {
+    // Generate new session_id for fresh conversation
+    setSessionId(generateSessionId());
     setMessages(welcomeMessage ? [{
       id: 'welcome',
       type: 'status',

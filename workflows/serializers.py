@@ -81,11 +81,14 @@ class WorkflowChatConversationSerializer(serializers.ModelSerializer):
             'workflow_execution', 'execution_status', 'status', 'response_data',
             'created_at', 'updated_at', 'created_by'
         ]
-        read_only_fields = ['id', 'session_id', 'created_at', 'updated_at', 'created_by', 'workflow_name', 'execution_status']
+        # Remove session_id from read_only_fields so frontend can provide it
+        read_only_fields = ['id', 'created_at', 'updated_at', 'created_by', 'workflow_name', 'execution_status']
 
     def create(self, validated_data):
         import uuid
-        validated_data['session_id'] = uuid.uuid4()
+        # Only generate session_id if not provided by frontend
+        if 'session_id' not in validated_data or not validated_data['session_id']:
+            validated_data['session_id'] = uuid.uuid4()
         validated_data['created_by'] = self.context['request'].user
         return super().create(validated_data)
 

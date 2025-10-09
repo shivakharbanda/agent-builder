@@ -1,21 +1,22 @@
 """
-Asynchronous Workflow Executor
+Pydantic AI Graph-based Workflow Executor
 
-Handles background execution of workflows and individual nodes.
+Handles background execution of workflows using Pydantic AI Graph.
 Supports both single node execution and full workflow execution.
 """
 
 import threading
 from django.utils import timezone
 from workflows.models import WorkflowExecution, NodeExecution, WorkflowNode
+from workflows.execution.graph_executor import execute_workflow_sync
 
 
 def execute_workflow_async(execution_id: int):
     """
-    Execute workflow (single node or full) asynchronously.
+    Execute workflow using Pydantic AI Graph asynchronously.
 
     This is the main entry point called from a background thread.
-    Determines execution type and delegates to appropriate handler.
+    Uses Pydantic Graph for full workflow execution.
 
     Args:
         execution_id: ID of WorkflowExecution record
@@ -24,9 +25,13 @@ def execute_workflow_async(execution_id: int):
         execution = WorkflowExecution.objects.get(id=execution_id)
 
         if execution.execution_type == 'single_node':
+            # Single node execution still uses old method (for now)
+            # TODO: Implement single node execution with graph
             _execute_single_node(execution)
         else:
-            _execute_full_workflow(execution)
+            # Full workflow execution uses Pydantic Graph
+            print(f"\n[ASYNC EXECUTOR] Starting Pydantic Graph execution for {execution_id}")
+            execute_workflow_sync(execution_id)
 
     except WorkflowExecution.DoesNotExist:
         print(f"ERROR: WorkflowExecution {execution_id} not found")
