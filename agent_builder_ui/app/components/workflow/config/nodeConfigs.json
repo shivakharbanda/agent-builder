@@ -490,5 +490,36 @@
         "description": "Output when condition is false"
       }
     ]
+  },
+  "toolbox": {
+    "name": "Toolbox",
+    "description": "Attach tools to AI agents",
+    "icon": "construction",
+    "category": "tools",
+    "fields": [
+      {
+        "name": "mcp_server_ids",
+        "type": "mcp_server_multi_select",
+        "label": "MCP Servers",
+        "placeholder": "Select MCP servers",
+        "required": false,
+        "help": "Select MCP servers to provide to the connected agent"
+      },
+      {
+        "name": "internal_tool_attachments",
+        "type": "internal_tool_multi_select",
+        "label": "Internal Tools",
+        "placeholder": "Select internal tools with credentials",
+        "required": false,
+        "help": "Select internal tools and their credentials for the agent"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "tools_config",
+        "type": "config",
+        "description": "Tool configuration provided to connected agent node"
+      }
+    ]
   }
 }

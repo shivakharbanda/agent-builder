@@ -126,16 +126,27 @@ class AgentNode(BaseNode):
             List[Dict]: Processed results from agent with original data + agent outputs
 
         Flow:
-            1. Validate input is list of dicts
-            2. Apply input_mapping to transform data
-            3. Split into batches based on batch_size
-            4. Process each batch (currently mocked)
-            5. Aggregate and return results
+            1. Check for toolbox connection (bottom handle)
+            2. Validate input is list of dicts
+            3. Apply input_mapping to transform data
+            4. Split into batches based on batch_size
+            5. Process each batch with tools from toolbox (if connected)
+            6. Aggregate and return results
         """
         from datetime import datetime
         import time
 
         config = self.configuration
+
+        # Check for toolbox connection (bottom handle = "tools-input")
+        mcp_server_ids = None
+        internal_tool_attachments = None
+
+        toolbox_config = self._get_toolbox_config()
+        if toolbox_config:
+            mcp_server_ids = toolbox_config.get('mcp_server_ids')
+            internal_tool_attachments = toolbox_config.get('internal_tool_attachments')
+            print(f"[AGENT NODE] Toolbox connected: {len(mcp_server_ids or [])} MCP servers, {len(internal_tool_attachments or [])} internal tools")
 
         # Get configuration with defaults (convert strings to int)
         batch_size = config.get('batch_size', 100)
@@ -239,7 +250,9 @@ class AgentNode(BaseNode):
                     result = executor.execute_structured(
                         placeholder_values=placeholder_values,
                         credential_id=int(llm_credential_id),
-                        model=model if model else None
+                        model=model if model else None,
+                        mcp_server_ids=mcp_server_ids,
+                        internal_tool_attachments=internal_tool_attachments
                     )
 
                     if result['success']:
@@ -271,7 +284,9 @@ class AgentNode(BaseNode):
                         message=str(placeholder_values),  # Convert dict to string
                         credential_id=int(llm_credential_id),
                         conversation_history=None,  # No conversation context in workflows
-                        model=model if model else None
+                        model=model if model else None,
+                        mcp_server_ids=mcp_server_ids,
+                        internal_tool_attachments=internal_tool_attachments
                     )
 
                     if result['success']:
@@ -300,3 +315,80 @@ class AgentNode(BaseNode):
             all_results.extend(batch_results)
 
         return all_results
+
+    def _get_toolbox_config(self):
+        """
+        Check for connected toolbox node and return its configuration.
+
+        Looks for incoming edges with targetHandle='tools-input' (bottom handle).
+        If found, executes the toolbox node and returns its configuration.
+
+        Returns:
+            dict or None: Toolbox configuration containing mcp_server_ids and
+                         internal_tool_attachments, or None if no toolbox connected
+        """
+        from workflows.models import Workflow, WorkflowNode
+        from workflows.execution.node_handlers.factory import NodeFactory
+
+        try:
+            # Get workflow
+            workflow = Workflow.objects.get(id=self.workflow_id)
+
+            # Get edges from workflow configuration
+            edges = workflow.configuration.get('edges', [])
+
+            # Find toolbox edges (target is this node, targetHandle is 'tools-input')
+            toolbox_edges = [
+                edge for edge in edges
+                if edge.get('target') == self.node_id and edge.get('targetHandle') == 'tools-input'
+            ]
+
+            if not toolbox_edges:
+                print(f"[AGENT NODE] No toolbox connected")
+                return None
+
+            # Should only be one toolbox per agent (enforced by frontend)
+            if len(toolbox_edges) > 1:
+                print(f"[AGENT NODE] WARNING: Multiple toolboxes found ({len(toolbox_edges)}), using first")
+
+            toolbox_edge = toolbox_edges[0]
+            toolbox_node_id = toolbox_edge.get('source')
+
+            print(f"[AGENT NODE] Found toolbox connection from node {toolbox_node_id}")
+
+            # Get toolbox node
+            toolbox_node = WorkflowNode.objects.get(
+                id=toolbox_node_id,
+                workflow=workflow,
+                is_active=True
+            )
+
+            # Verify it's actually a toolbox node
+            if toolbox_node.node_type != 'toolbox':
+                print(f"[AGENT NODE] WARNING: Node {toolbox_node_id} is not a toolbox (type: {toolbox_node.node_type})")
+                return None
+
+            # Create toolbox node instance
+            toolbox_instance = NodeFactory.create_node(
+                node_id=toolbox_node.id,
+                node_type=toolbox_node.node_type,
+                configuration=toolbox_node.configuration,
+                workflow_id=self.workflow_id,
+                execution_id=self.execution_id,
+                position=toolbox_node.position
+            )
+
+            # Execute toolbox (returns configuration)
+            toolbox_config = toolbox_instance.run()
+
+            print(f"[AGENT NODE] Toolbox configuration retrieved successfully")
+            return toolbox_config
+
+        except (Workflow.DoesNotExist, WorkflowNode.DoesNotExist) as e:
+            print(f"[AGENT NODE] Error retrieving toolbox config: {e}")
+            return None
+        except Exception as e:
+            print(f"[AGENT NODE] Unexpected error getting toolbox config: {e}")
+            import traceback
+            traceback.print_exc()
+            return None

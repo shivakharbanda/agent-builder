@@ -53,6 +53,12 @@ export function NodePalette() {
           icon: 'smart_toy',
           label: 'Agent Node',
           description: 'AI processing node'
+        },
+        {
+          type: 'toolbox',
+          icon: 'construction',
+          label: 'Toolbox',
+          description: 'Attach tools to agents'
         }
       ]
     },

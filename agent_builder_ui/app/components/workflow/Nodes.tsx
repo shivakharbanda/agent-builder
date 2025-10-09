@@ -334,6 +334,14 @@ export function AgentNode({ data, selected }: { data: any; selected: boolean }) 
         style={{ top: '65%' }}
       />
 
+      {/* Tools Input Handle - Bottom (Amber) */}
+      <Handle
+        type="target"
+        position={Position.Bottom}
+        id="tools-input"
+        className="w-4 h-4 bg-[#f59e0b] border-2 border-white"
+      />
+
       {/* Output Handle - Right */}
       <Handle
         type="source"
@@ -344,6 +352,67 @@ export function AgentNode({ data, selected }: { data: any; selected: boolean }) 
       {/* Handle Labels */}
       <div className="absolute left-[-50px] top-[33%] text-[10px] text-gray-400">data</div>
       <div className="absolute left-[-60px] top-[63%] text-[10px] text-amber-400">context</div>
+      <div className="absolute bottom-[-18px] left-1/2 transform -translate-x-1/2 text-[10px] text-amber-400">tools</div>
+    </div>
+  );
+}
+
+// Toolbox Node
+export function ToolboxNode({ data, selected }: { data: any; selected: boolean }) {
+  // Count configured tools
+  const mcpCount = data.config?.mcp_server_ids?.length || 0;
+  const internalToolCount = data.config?.internal_tool_attachments?.length || 0;
+  const totalTools = mcpCount + internalToolCount;
+
+  return (
+    <div className={`bg-[#2e1f0d] p-4 rounded-lg shadow-md border-2 w-48 relative transition-all group ${
+      selected ? 'border-[#f59e0b] shadow-lg shadow-[#f59e0b]/20' : 'border-[#92400e]'
+    }`}>
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center">
+          <span className="material-symbols-outlined text-[#f59e0b] mr-2 text-xl">construction</span>
+          <h4 className="font-semibold text-white">{data.label || 'Toolbox'}</h4>
+        </div>
+        <div className="flex space-x-1">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              data.onConfig?.(data.id, 'toolbox', data);
+            }}
+            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-[#f59e0b] transition-opacity"
+            title="Configure node"
+          >
+            <span className="material-symbols-outlined text-sm">settings</span>
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              data.onDelete?.(data.id);
+            }}
+            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-400 transition-opacity"
+            title="Delete node"
+          >
+            <span className="material-symbols-outlined text-sm">close</span>
+          </button>
+        </div>
+      </div>
+      <p className="text-xs text-gray-400">Provides tools to AI agents</p>
+      {totalTools > 0 ? (
+        <div className="mt-2 text-xs text-[#f59e0b]">
+          ✓ {totalTools} tool{totalTools !== 1 ? 's' : ''} configured
+          {mcpCount > 0 && <div className="text-[10px] text-gray-500 mt-0.5">MCP: {mcpCount}</div>}
+          {internalToolCount > 0 && <div className="text-[10px] text-gray-500">Internal: {internalToolCount}</div>}
+        </div>
+      ) : (
+        <div className="mt-2 text-xs text-gray-500">No tools configured</div>
+      )}
+
+      {/* Output Handle - Top (connects to agent bottom) */}
+      <Handle
+        type="source"
+        position={Position.Top}
+        className="w-4 h-4 bg-[#f59e0b] border-2 border-white"
+      />
     </div>
   );
 }

@@ -47,6 +47,7 @@ class NodeFactory:
         from .script import ScriptNode
         from .conditional import ConditionalNode
         from .internal_tool import InternalToolNode
+        from .toolbox import ToolboxNode
         from .trigger_manual import ManualTriggerNode
         from .trigger_schedule import ScheduleTriggerNode
         from .trigger_chat import ChatTriggerNode
@@ -67,6 +68,8 @@ class NodeFactory:
             'conditional': ConditionalNode,
             # Data sink nodes
             'output': OutputNode,
+            # Tool nodes
+            'toolbox': ToolboxNode,
         }
 
     @classmethod

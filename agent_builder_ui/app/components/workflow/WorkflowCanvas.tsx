@@ -22,7 +22,7 @@ import { Button } from '../ui/Button';
 import { api } from '../../lib/api';
 import { useToast } from '../../hooks/useToast';
 import { ToastContainer } from '../ui/Toast';
-import { TriggerManualNode, TriggerScheduleNode, TriggerChatNode, DatabaseNode, AgentNode, OutputNode, FilterNode, ScriptNode, ConditionalNode  } from './Nodes'
+import { TriggerManualNode, TriggerScheduleNode, TriggerChatNode, DatabaseNode, AgentNode, OutputNode, FilterNode, ScriptNode, ConditionalNode, ToolboxNode } from './Nodes'
 interface WorkflowCanvasProps {
   onConfigChange?: (config: WorkflowConfig) => void;
   initialConfig?: WorkflowConfig;
@@ -46,6 +46,8 @@ const nodeTypes = {
   filter: FilterNode,
   script: ScriptNode,
   conditional: ConditionalNode,
+  // Tool nodes
+  toolbox: ToolboxNode,
 };
 
 export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExecuteNode, nodeExecutionCache, workflowId }: WorkflowCanvasProps) {
@@ -356,9 +358,42 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExe
   // Connect nodes
   const onConnect = useCallback(
     (params: any) => {
+      // Find source and target nodes
+      const sourceNode = nodes.find(n => n.id === params.source);
+      const targetNode = nodes.find(n => n.id === params.target);
+
+      // Validate toolbox connections
+      if (sourceNode?.type === 'toolbox') {
+        // Toolbox can only connect to agent nodes via tools-input handle
+        if (targetNode?.type !== 'agent') {
+          showToast('Toolbox can only connect to Agent nodes', 'error');
+          return;
+        }
+        if (params.targetHandle !== 'tools-input') {
+          showToast('Toolbox must connect to the bottom (tools) handle of Agent nodes', 'error');
+          return;
+        }
+
+        // Check if agent already has a toolbox connected
+        const existingToolboxEdge = edges.find(
+          edge => edge.target === params.target && edge.targetHandle === 'tools-input'
+        );
+        if (existingToolboxEdge) {
+          showToast('Agent already has a toolbox connected (max 1 per agent)', 'error');
+          return;
+        }
+      }
+
+      // Validate tools-input handle (only toolbox can connect to it)
+      if (params.targetHandle === 'tools-input' && sourceNode?.type !== 'toolbox') {
+        showToast('Only Toolbox nodes can connect to the tools handle', 'error');
+        return;
+      }
+
       // Color-code edge based on target handle type
       const isContextInput = params.targetHandle === 'context-input';
-      const edgeColor = isContextInput ? '#f59e0b' : '#1173d4';  // Orange for context, blue for data
+      const isToolsInput = params.targetHandle === 'tools-input';
+      const edgeColor = isContextInput || isToolsInput ? '#f59e0b' : '#1173d4';  // Orange for context/tools, blue for data
 
       const newEdge = {
         ...params,
@@ -369,7 +404,7 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExe
       };
       setEdges((eds) => addEdge(newEdge, eds));
     },
-    [setEdges]
+    [setEdges, nodes, edges, showToast]
   );
 
   const onDragOver = useCallback((event: React.DragEvent) => {
@@ -474,6 +509,11 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExe
         return {
           condition: '',
           operator: '=='
+        };
+      case 'toolbox':
+        return {
+          mcp_server_ids: [],
+          internal_tool_attachments: []
         };
       default:
         return {};
