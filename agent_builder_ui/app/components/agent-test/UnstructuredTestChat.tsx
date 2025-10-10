@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Button } from '../ui/Button';
+import { MarkdownRenderer } from '../ui/MarkdownRenderer';
 import type { ConversationMessage } from '../../lib/types';
 
 interface UnstructuredTestChatProps {
@@ -42,6 +43,8 @@ export function UnstructuredTestChat({
 
     const messageToSend = message;
     setMessage('');
+
+    // Hook handles optimistic update - user message appears immediately
     await onSendMessage(messageToSend);
   };
 
@@ -106,7 +109,9 @@ export function UnstructuredTestChat({
                   {msg.role === 'user' ? 'You' : 'Agent'}
                 </span>
               </div>
-              <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+              <div className="text-sm">
+                <MarkdownRenderer content={msg.content} />
+              </div>
             </div>
           </div>
         ))}

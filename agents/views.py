@@ -110,7 +110,10 @@ class TestAgentView(APIView):
         Returns:
             Test results with agent output
         """
+        import uuid
         from .services import AgentExecutor, ConversationManager
+        from .models import AgentTestSession
+        from pydantic_ai.messages import ModelMessagesTypeAdapter
 
         # Validate request
         request_serializer = AgentTestRequestSerializer(data=request.data)
@@ -122,6 +125,7 @@ class TestAgentView(APIView):
         model = test_data.get('model', None)
         mcp_server_ids = test_data.get('mcp_server_ids', None)
         internal_tool_attachments = test_data.get('internal_tool_attachments', None)
+        session_id = test_data.get('session_id', None)
 
         try:
             # Initialize executor
@@ -140,19 +144,81 @@ class TestAgentView(APIView):
 
             else:  # unstructured
                 message = test_data.get('message')
-                conversation_history = test_data.get('conversation_history', [])
 
-                # Validate conversation history
-                conversation_history = ConversationManager.validate_history(conversation_history)
+                # Session-based persistence (preferred method)
+                if session_id:
+                    # Get or create session
+                    session, created = AgentTestSession.objects.get_or_create(
+                        session_id=session_id,
+                        defaults={
+                            'agent_id': pk,
+                            'created_by': request.user,
+                            'message_history_blob': ''
+                        }
+                    )
 
+                    # Load message history from blob
+                    message_history = []
+                    if session.message_history_blob:
+                        try:
+                            message_history = ModelMessagesTypeAdapter.validate_json(session.message_history_blob)
+                        except Exception as e:
+                            print(f"[TEST AGENT] Failed to deserialize message history: {e}")
+                            message_history = []
+                else:
+                    # Fallback: use conversation_history from request (deprecated)
+                    conversation_history = test_data.get('conversation_history', [])
+                    conversation_history = ConversationManager.validate_history(conversation_history)
+                    # Convert frontend format to PydanticAI format (this is lossy, prefer session_id)
+                    message_history = conversation_history  # AgentExecutor will handle conversion
+                    session_id = uuid.uuid4()  # Auto-generate for response
+
+                # Execute agent
                 result = executor.execute_unstructured(
                     message=message,
                     credential_id=credential_id,
-                    conversation_history=conversation_history,
+                    message_history=message_history,
                     model=model,
                     mcp_server_ids=mcp_server_ids,
                     internal_tool_attachments=internal_tool_attachments
                 )
+
+                # Build conversation history for frontend
+                if result['success']:
+                    new_messages_json = result.get('new_messages_json', '')
+                    if new_messages_json:
+                        # Parse PydanticAI messages from this execution
+                        new_messages = ModelMessagesTypeAdapter.validate_json(new_messages_json)
+
+                        # CRITICAL FIX: Merge old message_history (from blob) with new_messages
+                        # message_history was loaded earlier from session blob (lines 161-167)
+                        all_messages = message_history + new_messages
+
+                        # Serialize ALL messages (old + new) for storage
+                        all_messages_json = ModelMessagesTypeAdapter.dump_json(all_messages).decode('utf-8')
+
+                        # Save FULL conversation to session blob for persistence
+                        if session_id:
+                            session, created = AgentTestSession.objects.get_or_create(
+                                session_id=session_id,
+                                defaults={
+                                    'agent_id': pk,
+                                    'created_by': request.user,
+                                    'message_history_blob': all_messages_json
+                                }
+                            )
+                            if not created:
+                                session.message_history_blob = all_messages_json
+                                session.save()
+
+                        # Convert ALL messages to conversation format for frontend
+                        full_history = ConversationManager.messages_to_history(all_messages)
+                        result['conversation_history'] = full_history
+                    else:
+                        result['conversation_history'] = []
+
+                # Return session_id so frontend can continue conversation
+                result['session_id'] = str(session_id)
 
             # Serialize response
             response_serializer = AgentTestResponseSerializer(data=result)

@@ -419,9 +419,10 @@ export interface AgentTestRequest {
   test_type: AgentTestType;
   credential_id: number;
   model?: string;  // Optional model name (e.g., 'gemini-1.5-flash', 'gpt-4o')
+  session_id?: string;  // Session ID for conversation persistence
   inputs?: Record<string, any>;  // For structured tests
   message?: string;  // For unstructured tests
-  conversation_history?: ConversationMessage[];  // For unstructured tests
+  conversation_history?: ConversationMessage[];  // For unstructured tests (deprecated - use session_id)
   mcp_server_ids?: number[];  // Optional MCP server IDs for ad-hoc attachment
   internal_tool_attachments?: InternalToolAttachment[];  // Optional internal tool attachments
 }
@@ -430,6 +431,7 @@ export interface AgentTestResponse {
   success: boolean;
   execution_time_ms: number;
   error?: string;
+  session_id?: string;  // Session ID returned from backend
   output?: Record<string, any>;  // For structured tests
   response?: string;  // For unstructured tests
   conversation_history?: ConversationMessage[];  // For unstructured tests

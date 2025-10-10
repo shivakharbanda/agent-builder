@@ -1,4 +1,5 @@
 import React from 'react';
+import { MarkdownRenderer } from '../ui/MarkdownRenderer';
 
 export interface ChatMessage {
   role: 'user' | 'model';
@@ -27,8 +28,8 @@ export function ChatMessageComponent({ message }: ChatMessageProps) {
           </div>
         )}
 
-        <div className="text-sm leading-relaxed whitespace-pre-wrap">
-          {message.content}
+        <div className="text-sm leading-relaxed">
+          <MarkdownRenderer content={message.content} />
         </div>
 
         <div className={`text-xs mt-2 ${

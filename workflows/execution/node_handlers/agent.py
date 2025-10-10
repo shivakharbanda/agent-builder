@@ -334,7 +334,7 @@ class AgentNode(BaseNode):
                     result = executor.execute_unstructured(
                         message=substituted_message,
                         credential_id=int(llm_credential_id),
-                        conversation_history=None,  # No conversation context in workflows
+                        message_history=None,  # No conversation context in workflows
                         model=model if model else None,
                         mcp_server_ids=mcp_server_ids,
                         internal_tool_attachments=internal_tool_attachments

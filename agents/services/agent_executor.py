@@ -140,7 +140,7 @@ class AgentExecutor:
 
         return toolsets
 
-    def _load_internal_tools(self, tool_attachments: Optional[List[Dict[str, int]]] = None) -> List:
+    def _load_internal_tools(self, tool_attachments: Optional[List[Dict[str, int]]] = None) -> tuple[List, List]:
         """
         Load internal tools with credentials injected.
 
@@ -150,13 +150,17 @@ class AgentExecutor:
                             If None, loads from agent's permanent attachments.
 
         Returns:
-            List of PydanticAI tool functions with credentials injected
+            Tuple of (tool_functions, tool_toolsets):
+                - tool_functions: Plain callable functions for tools= parameter
+                - tool_toolsets: FunctionToolset instances for toolsets= parameter
         """
         from agents.tools import get_tool
         from agents.models import AgentInternalTool, InternalTool
         from credentials.models import Credential
+        from pydantic_ai.toolsets import FunctionToolset
 
-        toolsets = []
+        tool_functions = []
+        tool_toolsets = []
 
         print(f"\n{'='*80}")
         print(f"[AGENT EXECUTOR] Loading internal tools...")
@@ -206,8 +210,13 @@ class AgentExecutor:
                     print(f"[AGENT EXECUTOR]   → Creating PydanticAI tool wrapper...")
                     pydantic_tool = tool_class.get_pydantic_tool(credential)
 
-                    toolsets.append(pydantic_tool)
-                    print(f"[AGENT EXECUTOR]   ✅ Successfully loaded internal tool: {tool_config.name}")
+                    # Route to correct list based on type
+                    if isinstance(pydantic_tool, FunctionToolset):
+                        tool_toolsets.append(pydantic_tool)
+                        print(f"[AGENT EXECUTOR]   ✅ Successfully loaded internal tool (toolset): {tool_config.name}")
+                    else:
+                        tool_functions.append(pydantic_tool)
+                        print(f"[AGENT EXECUTOR]   ✅ Successfully loaded internal tool (function): {tool_config.name}")
 
                 except InternalTool.DoesNotExist:
                     print(f"[AGENT EXECUTOR]   ❌ SKIPPED: Tool ID {tool_id} not found or inactive")
@@ -227,11 +236,12 @@ class AgentExecutor:
 
             print(f"\n[AGENT EXECUTOR] Ad-hoc Internal Tools Summary:")
             print(f"[AGENT EXECUTOR]   - Total attachments processed: {len(tool_attachments)}")
-            print(f"[AGENT EXECUTOR]   - Successfully loaded: {len(toolsets)}")
-            print(f"[AGENT EXECUTOR]   - Failed/Skipped: {len(tool_attachments) - len(toolsets)}")
+            print(f"[AGENT EXECUTOR]   - Successfully loaded functions: {len(tool_functions)}")
+            print(f"[AGENT EXECUTOR]   - Successfully loaded toolsets: {len(tool_toolsets)}")
+            print(f"[AGENT EXECUTOR]   - Failed/Skipped: {len(tool_attachments) - len(tool_functions) - len(tool_toolsets)}")
             print(f"{'='*80}\n")
 
-            return toolsets
+            return tool_functions, tool_toolsets
 
         # Load from agent's permanent internal tool attachments
         agent_tools = AgentInternalTool.objects.filter(
@@ -271,8 +281,13 @@ class AgentExecutor:
                 print(f"[AGENT EXECUTOR]   → Creating PydanticAI tool wrapper...")
                 pydantic_tool = tool_class.get_pydantic_tool(credential)
 
-                toolsets.append(pydantic_tool)
-                print(f"[AGENT EXECUTOR]   ✅ Successfully loaded internal tool: {tool_config.name}")
+                # Route to correct list based on type
+                if isinstance(pydantic_tool, FunctionToolset):
+                    tool_toolsets.append(pydantic_tool)
+                    print(f"[AGENT EXECUTOR]   ✅ Successfully loaded internal tool (toolset): {tool_config.name}")
+                else:
+                    tool_functions.append(pydantic_tool)
+                    print(f"[AGENT EXECUTOR]   ✅ Successfully loaded internal tool (function): {tool_config.name}")
 
             except KeyError as e:
                 print(f"[AGENT EXECUTOR]   ❌ Failed: Tool type '{tool_config.tool_type}' not found in registry")
@@ -286,11 +301,12 @@ class AgentExecutor:
 
         print(f"\n[AGENT EXECUTOR] Internal Tools Summary:")
         print(f"[AGENT EXECUTOR]   - Total tools processed: {len(agent_tools)}")
-        print(f"[AGENT EXECUTOR]   - Successfully loaded: {len(toolsets)}")
-        print(f"[AGENT EXECUTOR]   - Failed/Skipped: {len(agent_tools) - len(toolsets)}")
+        print(f"[AGENT EXECUTOR]   - Successfully loaded functions: {len(tool_functions)}")
+        print(f"[AGENT EXECUTOR]   - Successfully loaded toolsets: {len(tool_toolsets)}")
+        print(f"[AGENT EXECUTOR]   - Failed/Skipped: {len(agent_tools) - len(tool_functions) - len(tool_toolsets)}")
         print(f"{'='*80}\n")
 
-        return toolsets
+        return tool_functions, tool_toolsets
 
     def _get_llm_model(self, credential_id: int, model: str = None):
         """
@@ -449,20 +465,26 @@ class AgentExecutor:
             # Load MCP toolsets
             mcp_toolsets = self._load_mcp_toolsets(mcp_server_ids)
 
-            # Load internal tools (plain functions)
-            internal_tools = self._load_internal_tools(internal_tool_attachments)
+            # Load internal tools (returns functions and toolsets separately)
+            internal_tool_functions, internal_toolsets = self._load_internal_tools(internal_tool_attachments)
 
-            print(f"[AGENT EXECUTOR] Total tools loaded: {len(mcp_toolsets) + len(internal_tools)} (MCP toolsets: {len(mcp_toolsets)}, Internal tools: {len(internal_tools)})")
+            # Merge all toolsets (MCP + internal)
+            all_toolsets = mcp_toolsets + internal_toolsets
+
+            print(f"[AGENT EXECUTOR] Total tools loaded: {len(all_toolsets)} toolsets, {len(internal_tool_functions)} functions")
+            print(f"[AGENT EXECUTOR]   - MCP toolsets: {len(mcp_toolsets)}")
+            print(f"[AGENT EXECUTOR]   - Internal toolsets: {len(internal_toolsets)}")
+            print(f"[AGENT EXECUTOR]   - Internal functions: {len(internal_tool_functions)}")
 
             # Create PydanticAI agent
-            # toolsets = MCP server objects (MCPServerStreamableHTTP, MCPServerSSE)
-            # tools = Plain functions or Tool instances
+            # toolsets = MCP + internal toolsets (FunctionToolset, MCPServerStreamableHTTP, etc.)
+            # tools = Plain callable functions
             pydantic_agent = PydanticAgent(
                 model=llm_model,
                 output_type=output_type,
                 system_prompt=system_prompt,
-                toolsets=mcp_toolsets,
-                tools=internal_tools
+                toolsets=all_toolsets,
+                tools=internal_tool_functions
             )
 
             # Execute agent
@@ -551,19 +573,25 @@ class AgentExecutor:
             # Load MCP toolsets
             mcp_toolsets = self._load_mcp_toolsets(mcp_server_ids)
 
-            # Load internal tools (plain functions)
-            internal_tools = self._load_internal_tools(internal_tool_attachments)
+            # Load internal tools (returns functions and toolsets separately)
+            internal_tool_functions, internal_toolsets = self._load_internal_tools(internal_tool_attachments)
 
-            print(f"[AGENT EXECUTOR] Total tools loaded: {len(mcp_toolsets) + len(internal_tools)} (MCP toolsets: {len(mcp_toolsets)}, Internal tools: {len(internal_tools)})")
+            # Merge all toolsets (MCP + internal)
+            all_toolsets = mcp_toolsets + internal_toolsets
+
+            print(f"[AGENT EXECUTOR] Total tools loaded: {len(all_toolsets)} toolsets, {len(internal_tool_functions)} functions")
+            print(f"[AGENT EXECUTOR]   - MCP toolsets: {len(mcp_toolsets)}")
+            print(f"[AGENT EXECUTOR]   - Internal toolsets: {len(internal_toolsets)}")
+            print(f"[AGENT EXECUTOR]   - Internal functions: {len(internal_tool_functions)}")
 
             # Create PydanticAI agent (no output_type for unstructured)
-            # toolsets = MCP server objects (MCPServerStreamableHTTP, MCPServerSSE)
-            # tools = Plain functions or Tool instances
+            # toolsets = MCP + internal toolsets (FunctionToolset, MCPServerStreamableHTTP, etc.)
+            # tools = Plain callable functions
             pydantic_agent = PydanticAgent(
                 model=llm_model,
                 system_prompt=system_prompt,
-                toolsets=mcp_toolsets,
-                tools=internal_tools
+                toolsets=all_toolsets,
+                tools=internal_tool_functions
             )
 
             # Log message history if provided

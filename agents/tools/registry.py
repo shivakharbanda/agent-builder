@@ -119,6 +119,12 @@ def load_builtin_tools():
     except ImportError as e:
         print(f"[TOOL REGISTRY] Warning: Could not import SerpApiTool: {e}")
 
+    try:
+        from .database_toolset import DatabaseToolset
+        register_tool('database_toolset', DatabaseToolset)
+    except ImportError as e:
+        print(f"[TOOL REGISTRY] Warning: Could not import DatabaseToolset: {e}")
+
     # Future tools:
     # from .weather import WeatherTool
     # register_tool('weather', WeatherTool)

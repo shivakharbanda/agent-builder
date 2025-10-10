@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Input } from '../ui/Input';
+import { MarkdownRenderer } from '../ui/MarkdownRenderer';
 import { useWorkflowBuilder } from '../../hooks/useWorkflowBuilder';
 import { checkWorkflowBuilderHealth } from '../../lib/workflowConfigValidator';
 
@@ -125,7 +126,9 @@ export function ChatInterface({ onCommand, onWorkflowConfigComplete, projectId =
             <div className={`p-3 rounded-lg max-w-full ${
               message.role === 'model' ? 'bg-[#111a22]' : 'bg-[#1173d4]'
             }`}>
-              <p className="text-sm text-white whitespace-pre-line">{message.content}</p>
+              <div className="text-sm text-white">
+                <MarkdownRenderer content={message.content} />
+              </div>
               <span className="text-xs text-gray-400 mt-1 block">
                 {new Date(message.timestamp).toLocaleTimeString()}
               </span>

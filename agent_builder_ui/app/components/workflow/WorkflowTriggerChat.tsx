@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { api } from '../../lib/api';
 import { Input } from '../ui/Input';
 import { Button } from '../ui/Button';
+import { MarkdownRenderer } from '../ui/MarkdownRenderer';
 
 // Generate a unique session ID using modern browser API
 function generateSessionId(): string {
@@ -178,7 +179,9 @@ export function WorkflowTriggerChat({ workflowId, onClose, welcomeMessage }: Wor
         return (
           <div key={message.id} className="flex justify-end">
             <div className="bg-[#1173d4] rounded-lg px-4 py-2 max-w-[80%]">
-              <p className="text-sm text-white whitespace-pre-wrap">{message.content}</p>
+              <div className="text-sm text-white">
+                <MarkdownRenderer content={message.content} />
+              </div>
               <span className="text-xs text-gray-300 mt-1 block">
                 {message.timestamp.toLocaleTimeString()}
               </span>
@@ -229,7 +232,9 @@ export function WorkflowTriggerChat({ workflowId, onClose, welcomeMessage }: Wor
                 <span className="text-xs font-medium text-purple-400">Workflow Assistant</span>
               </div>
               <div className="ml-7">
-                <p className="text-sm text-gray-200 whitespace-pre-wrap">{message.content}</p>
+                <div className="text-sm text-gray-200">
+                  <MarkdownRenderer content={message.content} />
+                </div>
                 <span className="text-xs text-gray-400 mt-2 block">
                   {message.timestamp.toLocaleTimeString()}
                 </span>

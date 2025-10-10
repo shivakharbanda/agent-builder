@@ -204,14 +204,24 @@ export function TestAgentModal({ agent, prompts, onClose }: TestAgentModalProps)
           </div>
         </div>
 
-        {/* Configuration */}
-        <div className="px-6 py-4 bg-[#111a22] border-b border-[#374151]">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="flex items-center gap-4">
-              <span className="material-symbols-outlined text-gray-400">key</span>
-              <div className="flex-1">
+        {/* Configuration + Content Side-by-Side */}
+        <div className="flex flex-1 overflow-hidden">
+          {/* Left: Configuration Panel */}
+          <div className="w-2/5 border-r border-[#374151] overflow-y-auto p-6 bg-[#111a22]">
+            <h3 className="text-white font-medium mb-4 flex items-center gap-2">
+              <span className="material-symbols-outlined">settings</span>
+              Configuration
+            </h3>
+
+            <div className="space-y-4">
+              {/* LLM Credential */}
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="material-symbols-outlined text-gray-400 text-sm">key</span>
+                  <label className="text-sm text-gray-300 font-medium">LLM Credential</label>
+                </div>
                 <Select
-                  label="LLM Credential"
+                  label=""
                   value={selectedCredentialId}
                   onChange={(e) => setSelectedCredentialId(parseInt(e.target.value))}
                   options={[
@@ -229,12 +239,15 @@ export function TestAgentModal({ agent, prompts, onClose }: TestAgentModalProps)
                   </p>
                 )}
               </div>
-            </div>
-            <div className="flex items-center gap-4">
-              <span className="material-symbols-outlined text-gray-400">psychology</span>
-              <div className="flex-1">
+
+              {/* Model Name */}
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="material-symbols-outlined text-gray-400 text-sm">psychology</span>
+                  <label className="text-sm text-gray-300 font-medium">Model Name</label>
+                </div>
                 <Input
-                  label="Model Name"
+                  label=""
                   value={model}
                   onChange={(e) => setModel(e.target.value)}
                   placeholder="e.g., gemini-1.5-flash, gpt-4o"
@@ -244,18 +257,14 @@ export function TestAgentModal({ agent, prompts, onClose }: TestAgentModalProps)
                   Common: gemini-1.5-flash, gemini-1.5-pro, gpt-4o, gpt-4o-mini
                 </p>
               </div>
-            </div>
-          </div>
 
-          {/* MCP Servers Selection */}
-          {mcpServers.length > 0 && (
-            <div className="mt-4 pt-4 border-t border-[#374151]">
-              <div className="flex items-start gap-4">
-                <span className="material-symbols-outlined text-gray-400 mt-1">extension</span>
-                <div className="flex-1">
-                  <label className="text-sm text-gray-300 mb-2 block font-medium">
-                    MCP Servers (Optional)
-                  </label>
+              {/* MCP Servers Selection */}
+              {mcpServers.length > 0 && (
+                <div className="pt-4 border-t border-[#374151]">
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="material-symbols-outlined text-gray-400 text-sm">extension</span>
+                    <label className="text-sm text-gray-300 font-medium">MCP Servers (Optional)</label>
+                  </div>
                   <div className="flex flex-wrap gap-2">
                     {mcpServers.map(server => (
                       <button
@@ -273,22 +282,18 @@ export function TestAgentModal({ agent, prompts, onClose }: TestAgentModalProps)
                     ))}
                   </div>
                   <p className="text-gray-500 text-xs mt-2">
-                    Select MCP servers to attach for this test. {selectedMcpServerIds.length} selected.
+                    {selectedMcpServerIds.length} selected
                   </p>
                 </div>
-              </div>
-            </div>
-          )}
+              )}
 
-          {/* Internal Tools Selection */}
-          {internalTools.length > 0 && (
-            <div className="mt-4 pt-4 border-t border-[#374151]">
-              <div className="flex items-start gap-4">
-                <span className="material-symbols-outlined text-gray-400 mt-1">construction</span>
-                <div className="flex-1">
-                  <label className="text-sm text-gray-300 mb-2 block font-medium">
-                    Internal Tools (Optional)
-                  </label>
+              {/* Internal Tools Selection */}
+              {internalTools.length > 0 && (
+                <div className="pt-4 border-t border-[#374151]">
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="material-symbols-outlined text-gray-400 text-sm">construction</span>
+                    <label className="text-sm text-gray-300 font-medium">Internal Tools (Optional)</label>
+                  </div>
                   <div className="space-y-3">
                     {internalTools.map(tool => {
                       const isSelected = selectedInternalTools.has(tool.id);
@@ -296,11 +301,11 @@ export function TestAgentModal({ agent, prompts, onClose }: TestAgentModalProps)
                       const availableCreds = getCredentialsForTool(tool);
 
                       return (
-                        <div key={tool.id} className="flex items-start gap-3">
+                        <div key={tool.id} className="space-y-2">
                           <button
                             type="button"
                             onClick={() => toggleInternalTool(tool.id, tool)}
-                            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors flex-shrink-0 ${
+                            className={`w-full px-3 py-1.5 rounded-md text-sm font-medium transition-colors text-left ${
                               isSelected
                                 ? 'bg-[#1173d4] text-white'
                                 : 'bg-[#233648] text-gray-300 hover:bg-[#2d4a5f]'
@@ -309,7 +314,7 @@ export function TestAgentModal({ agent, prompts, onClose }: TestAgentModalProps)
                             {tool.name}
                           </button>
                           {isSelected && (
-                            <div className="flex-1">
+                            <div className="pl-2">
                               <Select
                                 label=""
                                 value={selectedCredId}
@@ -335,37 +340,37 @@ export function TestAgentModal({ agent, prompts, onClose }: TestAgentModalProps)
                     })}
                   </div>
                   <p className="text-gray-500 text-xs mt-2">
-                    Select internal tools and their credentials for this test. {selectedInternalTools.size} selected.
+                    {selectedInternalTools.size} selected
                   </p>
                 </div>
-              </div>
+              )}
             </div>
-          )}
-        </div>
+          </div>
 
-        {/* Content Area */}
-        <div className="flex-1 overflow-y-auto p-6">
-          {agent.return_type === 'structured' ? (
-            <StructuredTestForm
-              placeholders={placeholders}
-              credentialId={selectedCredentialId}
-              model={model}
-              onRun={handleRunStructured}
-              testing={testing}
-              testResult={testResult}
-              error={error}
-            />
-          ) : (
-            <UnstructuredTestChat
-              credentialId={selectedCredentialId}
-              model={model}
-              conversationHistory={conversationHistory}
-              onSendMessage={handleSendMessage}
-              onClearConversation={clearConversation}
-              testing={testing}
-              error={error}
-            />
-          )}
+          {/* Right: Chat/Test Area */}
+          <div className="flex-1 overflow-y-auto p-6">
+            {agent.return_type === 'structured' ? (
+              <StructuredTestForm
+                placeholders={placeholders}
+                credentialId={selectedCredentialId}
+                model={model}
+                onRun={handleRunStructured}
+                testing={testing}
+                testResult={testResult}
+                error={error}
+              />
+            ) : (
+              <UnstructuredTestChat
+                credentialId={selectedCredentialId}
+                model={model}
+                conversationHistory={conversationHistory}
+                onSendMessage={handleSendMessage}
+                onClearConversation={clearConversation}
+                testing={testing}
+                error={error}
+              />
+            )}
+          </div>
         </div>
 
         {/* Footer */}

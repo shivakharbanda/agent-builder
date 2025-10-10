@@ -193,6 +193,13 @@ class AgentTestRequestSerializer(serializers.Serializer):
         help_text="Model name to use (e.g., 'gemini-1.5-flash', 'gpt-4o'). If not provided, uses default from credential."
     )
 
+    # Session management for conversation persistence
+    session_id = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        help_text="UUID for test session (auto-generated if not provided)"
+    )
+
     # For structured tests
     inputs = serializers.JSONField(
         required=False,
@@ -209,7 +216,7 @@ class AgentTestRequestSerializer(serializers.Serializer):
         child=serializers.DictField(),
         required=False,
         default=list,
-        help_text="Conversation history for unstructured agent"
+        help_text="Conversation history for unstructured agent (deprecated - use session_id instead)"
     )
 
     # Optional MCP server IDs for ad-hoc attachment
@@ -252,6 +259,9 @@ class AgentTestResponseSerializer(serializers.Serializer):
     success = serializers.BooleanField()
     execution_time_ms = serializers.IntegerField()
     error = serializers.CharField(required=False, allow_null=True)
+
+    # Session management
+    session_id = serializers.UUIDField(required=False, allow_null=True)
 
     # For structured responses
     output = serializers.JSONField(required=False, allow_null=True)

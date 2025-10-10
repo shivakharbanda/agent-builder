@@ -215,3 +215,43 @@ class AgentInternalTool(BaseModel):
     class Meta:
         db_table = 'agents_agent_internal_tool'
         unique_together = [['agent', 'tool']]
+
+
+class AgentTestSession(BaseModel):
+    """
+    Store agent test chat sessions with conversation history.
+
+    Manages conversation persistence for agent testing modal.
+    Similar to WorkflowChatConversation but for agent testing.
+    """
+    session_id = models.UUIDField(
+        unique=True,
+        db_index=True,
+        help_text="UUID for this test session"
+    )
+    agent = models.ForeignKey(
+        Agent,
+        on_delete=models.CASCADE,
+        related_name='test_sessions',
+        help_text="Agent being tested"
+    )
+    message_history_blob = models.TextField(
+        blank=True,
+        default='',
+        help_text="Serialized PydanticAI ModelMessage history for conversation persistence"
+    )
+    last_activity = models.DateTimeField(
+        auto_now=True,
+        help_text="Last message timestamp for cleanup/expiry"
+    )
+
+    def __str__(self):
+        return f"Test session for {self.agent.name} - {self.session_id}"
+
+    class Meta:
+        db_table = 'agents_test_session'
+        ordering = ['-last_activity']
+        indexes = [
+            models.Index(fields=['session_id']),
+            models.Index(fields=['agent', '-last_activity']),
+        ]

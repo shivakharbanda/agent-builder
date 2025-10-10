@@ -146,3 +146,40 @@ class ConversationManager:
             Empty list
         """
         return []
+
+    @staticmethod
+    def messages_to_history(messages: List[Any]) -> List[Dict[str, str]]:
+        """
+        Convert PydanticAI ModelMessage objects to frontend conversation format.
+
+        Args:
+            messages: List of PydanticAI ModelMessage objects
+
+        Returns:
+            List of conversation messages with 'role' and 'content' keys
+        """
+        from pydantic_ai.messages import ModelRequest, ModelResponse, UserPromptPart, TextPart
+
+        conversation = []
+
+        for msg in messages:
+            if isinstance(msg, ModelRequest):
+                # Iterate through all parts to find UserPromptPart
+                # (first part might be SystemPromptPart)
+                for part in msg.parts:
+                    if isinstance(part, UserPromptPart):
+                        conversation.append({
+                            'role': 'user',
+                            'content': part.content
+                        })
+
+            elif isinstance(msg, ModelResponse):
+                # Iterate through all parts to find TextPart
+                for part in msg.parts:
+                    if isinstance(part, TextPart):
+                        conversation.append({
+                            'role': 'assistant',
+                            'content': part.content
+                        })
+
+        return conversation
