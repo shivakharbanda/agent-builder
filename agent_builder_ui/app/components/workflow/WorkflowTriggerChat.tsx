@@ -23,6 +23,7 @@ export function WorkflowTriggerChat({ workflowId, onClose, welcomeMessage }: Wor
   const [isLoading, setIsLoading] = useState(false);
   const [executionId, setExecutionId] = useState<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
   // Auto-scroll to bottom when messages change
@@ -132,6 +133,11 @@ export function WorkflowTriggerChat({ workflowId, onClose, welcomeMessage }: Wor
 
       // Start polling for execution status
       startPolling(result.execution_id);
+
+      // Refocus input after sending message
+      setTimeout(() => {
+        inputRef.current?.focus();
+      }, 100);
     } catch (error: any) {
       setMessages(prev => [...prev, {
         id: `error-${Date.now()}`,
@@ -300,6 +306,7 @@ export function WorkflowTriggerChat({ workflowId, onClose, welcomeMessage }: Wor
       <div className="p-4 border-t border-[#374151]">
         <div className="relative">
           <Input
+            ref={inputRef}
             type="text"
             placeholder={isLoading ? "Workflow executing..." : "Type your message..."}
             value={inputValue}
