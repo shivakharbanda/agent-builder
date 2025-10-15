@@ -7,7 +7,8 @@
       "Read(//mnt/c/Users/shiva/Desktop/personal-projects/dq_db_manager/dq_db_manager/**)",
       "Read(//mnt/c/Users/shiva/Desktop/personal-projects/dq_db_manager/dq_db_manager/handlers/**)",
       "WebFetch(domain:ai.pydantic.dev)",
-      "Bash(python manage.py makemigrations:*)"
+      "Bash(python manage.py makemigrations:*)",
+      "Bash(python -m py_compile:*)"
     ],
     "deny": [],
     "ask": []

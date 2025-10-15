@@ -3,9 +3,60 @@ import { WORKFLOW_BUILDER_CONFIG, APP_CONFIG } from './config';
 import { api } from './api';
 
 export interface WorkflowBuilderMessage {
-  role: 'user' | 'model';
+  role: 'user' | 'model' | 'assistant';
   timestamp: string;
   content: string;
+  structured?: boolean;  // NEW: indicates structured response
+  response?: WorkflowBuilderResponse;  // NEW: structured response data
+}
+
+// ============================================================================
+// Structured Response Types (matches FastAPI Pydantic models)
+// ============================================================================
+
+export interface NodeAddAction {
+  node_type: string;
+  position: { x: number; y: number };
+  config: Record<string, any>;
+  connects_to?: string[];
+  label?: string;
+}
+
+export interface NodeEditAction {
+  node_id: string;
+  config_updates: Record<string, any>;
+  position_update?: { x: number; y: number };
+}
+
+export interface NodeRemoveAction {
+  node_id: string;
+}
+
+export interface EdgeAddAction {
+  source: string;
+  target: string;
+  source_handle?: string;
+  target_handle?: string;
+}
+
+export interface EdgeRemoveAction {
+  edge_id: string;
+}
+
+export interface ConversationResponse {
+  message: string;
+  needs_user_input: boolean;
+  context?: string;
+}
+
+export interface WorkflowCompleteAction {
+  summary: string;
+}
+
+export interface WorkflowBuilderResponse {
+  action_type: 'node_add' | 'node_edit' | 'node_remove' | 'edge_add' | 'edge_remove' | 'conversation' | 'workflow_complete';
+  data: NodeAddAction | NodeEditAction | NodeRemoveAction | EdgeAddAction | EdgeRemoveAction | ConversationResponse | WorkflowCompleteAction;
+  message: string;
 }
 
 export interface WorkflowBuilderSession {
@@ -138,7 +189,8 @@ class WorkflowBuilderAPIClient {
 
   async *generateStream(
     prompt: string,
-    sessionId: string
+    sessionId: string,
+    currentConfig?: WorkflowConfig  // NEW: current workflow config for incremental/edit mode
   ): AsyncGenerator<WorkflowBuilderMessage, void, unknown> {
     const response = await fetch(
       `${WORKFLOW_BUILDER_CONFIG.BASE_URL}${WORKFLOW_BUILDER_CONFIG.GENERATE_ENDPOINT}`,
@@ -148,7 +200,11 @@ class WorkflowBuilderAPIClient {
           'Content-Type': 'application/json',
           'Accept': 'text/plain',
         },
-        body: JSON.stringify({ prompt, session_id: sessionId }),
+        body: JSON.stringify({
+          prompt,
+          session_id: sessionId,
+          current_config: currentConfig  // NEW: pass current config to FastAPI
+        }),
       }
     );
 

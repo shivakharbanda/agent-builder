@@ -22,6 +22,7 @@ export function ChatInterface({ onCommand, onWorkflowConfigComplete, projectId =
   const [inputValue, setInputValue] = useState('');
   const prevCompleteState = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   // Auto-trigger completion when finalization happens
   useEffect(() => {
@@ -89,6 +90,11 @@ export function ChatInterface({ onCommand, onWorkflowConfigComplete, projectId =
 
       // Check if configuration is complete
       await checkFinalization();
+
+      // Refocus input after sending message
+      setTimeout(() => {
+        inputRef.current?.focus();
+      }, 100);
     } catch (error) {
       console.error('Failed to send message:', error);
     }
@@ -101,8 +107,8 @@ export function ChatInterface({ onCommand, onWorkflowConfigComplete, projectId =
   };
 
   return (
-    <div className="flex-grow flex flex-col p-4">
-      <div className="flex-grow space-y-4 mb-4 overflow-y-auto">
+    <div className="flex flex-col h-full p-4">
+      <div className="flex-1 min-h-0 space-y-4 mb-4 overflow-y-auto">
         {session.messages.length === 0 && !session.isLoading && (
           <div className="text-center py-4">
             <span className="material-symbols-outlined text-3xl text-gray-500 mb-2 block">smart_toy</span>
@@ -163,6 +169,7 @@ export function ChatInterface({ onCommand, onWorkflowConfigComplete, projectId =
 
       <div className="relative flex-shrink-0">
         <Input
+          ref={inputRef}
           type="text"
           placeholder={session.isLoading ? "Thinking..." : "Describe your workflow..."}
           value={inputValue}

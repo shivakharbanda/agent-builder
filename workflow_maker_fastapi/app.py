@@ -5,7 +5,7 @@ import re
 import json
 import asyncio
 import uuid
-from typing import Any, Literal, List, Dict, TypedDict
+from typing import Any, Literal, List, Dict, TypedDict, Optional
 from datetime import datetime, timezone
 
 import fastapi
@@ -33,6 +33,11 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
 from dq_db_manager.models.postgres import DataSourceMetadata
+
+# Import multi-agent system
+from agents.supervisor import supervisor_agent
+from models.deps import SupervisorDeps, WorkflowConfig
+from models.responses import WorkflowBuilderResponse
 
 
 # ------------------------------------------------------------------------------
@@ -862,6 +867,7 @@ def extract_and_validate_workflow(text: str) -> dict | None:
 class GenerateRequest(BaseModel):
     prompt: str
     session_id: str
+    current_config: Optional[dict] = None  # NEW: current workflow state for incremental/edit mode
 
 
 class SessionScopedRequest(BaseModel):
@@ -936,18 +942,27 @@ async def new_session(body: NewSessionRequest) -> NewSessionResponse:
 @app.post("/generate/")
 async def generate_workflow(body: GenerateRequest) -> StreamingResponse:
     """
-    Conversational workflow generation: ask focused questions, then output final config JSON.
-    Uses session-based conversation with generator agent.
+    INCREMENTAL workflow generation using multi-agent system with structured output.
+
+    NEW FEATURES:
+    - Accepts current_config for incremental/edit mode
+    - Uses supervisor + worker multi-agent system
+    - Returns structured responses (WorkflowBuilderResponse)
+    - Supports one-change-at-a-time workflow building
+
+    OLD (deprecated but kept for now): generator_agent for full workflow generation
     """
     prompt = body.prompt
     session_id = body.session_id
+    current_config = body.current_config
 
     # DIAGNOSTIC LOGGING - Endpoint Entry
     print(f"\n{'#'*80}")
-    print(f"📥 /generate/ ENDPOINT CALLED")
+    print(f"📥 /generate/ ENDPOINT CALLED (MULTI-AGENT + STRUCTURED)")
     print(f"   Timestamp: {datetime.now(timezone.utc).isoformat()}")
     print(f"   Session ID: {session_id}")
     print(f"   Prompt: {prompt[:100]}{'...' if len(prompt) > 100 else ''}")
+    print(f"   Current Config: {'Present (edit mode)' if current_config else 'None (new workflow)'}")
     print(f"{'#'*80}\n")
 
     async def stream():
@@ -958,24 +973,40 @@ async def generate_workflow(body: GenerateRequest) -> StreamingResponse:
         messages = await load_messages(session_id)
         print(f"📚 Loaded {len(messages)} messages from history")
 
-        # Pass session_id directly as deps (FastAPI is stateless)
-        # Django will look up user/project from session_id
-        deps = session_id  # Just a string
+        # Build SupervisorDeps with current config
+        workflow_config = WorkflowConfig(**(current_config or {}))
+        deps = SupervisorDeps(
+            session_id=session_id,
+            current_config=workflow_config
+        )
 
-        print(f"🤖 Starting agent.run_stream with deps={deps}")
-        print(f"   Agent tools: get_credentials, get_agents, inspect_database_schema, query_database")
+        print(f"👔 Starting supervisor_agent with:")
+        print(f"   - Session ID: {session_id}")
+        print(f"   - Mode: {'EDIT' if deps.is_editing else 'NEW'}")
+        print(f"   - Current nodes: {len(workflow_config.nodes)}")
+        print(f"   - Current edges: {len(workflow_config.edges)}")
 
-        # Run the generator agent with full history, stream model output, and pass session_id as deps
-        async with generator_agent.run_stream(prompt, message_history=messages, deps=deps) as result:
-            print(f"✅ Agent stream started, waiting for output...")
+        # Run supervisor agent (non-streaming for structured output)
+        # NOTE: With output_type, Pydantic AI builds structured data internally
+        # and returns it in result.output after completion
+        print(f"🤖 Running supervisor agent (awaiting structured response)...")
+        result = await supervisor_agent.run(prompt, message_history=messages, deps=deps)
 
-            text_chunks = 0
-            async for text in result.stream_output(debounce_by=0.01):
-                text_chunks += 1
-                m = ModelResponse(parts=[TextPart(text)], timestamp=result.timestamp())
-                yield json.dumps(to_chat_message(m)).encode("utf-8") + b"\n"
+        # Get final structured response
+        structured_response = result.output  # This is a WorkflowBuilderResponse object
 
-            print(f"📤 Streamed {text_chunks} text chunks")
+        print(f"✅ Supervisor completed successfully")
+        print(f"📤 Structured Response:")
+        print(f"   Action: {structured_response.action_type}")
+        print(f"   Message: {structured_response.message[:80]}...")
+
+        # Yield structured response as JSON
+        yield json.dumps({
+            "role": "assistant",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "structured": True,
+            "response": structured_response.model_dump()
+        }).encode("utf-8") + b"\n"
 
         # Persist new messages (both the user request and the model response).
         await add_messages_blob(session_id, result.new_messages_json())

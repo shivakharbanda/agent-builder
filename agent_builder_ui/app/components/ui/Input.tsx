@@ -9,63 +9,66 @@ interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   rightIcon?: React.ReactNode;
 }
 
-export function Input({
-  className,
-  label,
-  error,
-  helperText,
-  leftIcon,
-  rightIcon,
-  id,
-  ...props
-}: InputProps) {
-  const generatedId = useId();
-  const inputId = id || generatedId;
+export const Input = React.forwardRef<HTMLInputElement, InputProps>(
+  function Input({
+    className,
+    label,
+    error,
+    helperText,
+    leftIcon,
+    rightIcon,
+    id,
+    ...props
+  }, ref) {
+    const generatedId = useId();
+    const inputId = id || generatedId;
 
-  return (
-    <div className="space-y-2">
-      {label && (
-        <label
-          htmlFor={inputId}
-          className="block text-sm font-medium text-white"
-        >
-          {label}
-        </label>
-      )}
-      <div className="relative">
-        {leftIcon && (
-          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-            <span className="text-gray-400">{leftIcon}</span>
-          </div>
+    return (
+      <div className="space-y-2">
+        {label && (
+          <label
+            htmlFor={inputId}
+            className="block text-sm font-medium text-white"
+          >
+            {label}
+          </label>
         )}
-        <input
-          id={inputId}
-          className={cn(
-            'w-full rounded-md border-0 bg-[#233648] px-4 py-3 text-base text-white placeholder:text-gray-500',
-            'focus:outline-none focus:ring-2 focus:ring-inset focus:ring-[#1173d4]',
-            'disabled:opacity-50 disabled:cursor-not-allowed',
-            leftIcon && 'pl-10',
-            rightIcon && 'pr-10',
-            error && 'ring-2 ring-red-500',
-            className
+        <div className="relative">
+          {leftIcon && (
+            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+              <span className="text-gray-400">{leftIcon}</span>
+            </div>
           )}
-          {...props}
-        />
-        {rightIcon && (
-          <div className="absolute inset-y-0 right-0 pr-3 flex items-center">
-            <span className="text-gray-400">{rightIcon}</span>
-          </div>
+          <input
+            ref={ref}
+            id={inputId}
+            className={cn(
+              'w-full rounded-md border-0 bg-[#233648] px-4 py-3 text-base text-white placeholder:text-gray-500',
+              'focus:outline-none focus:ring-2 focus:ring-inset focus:ring-[#1173d4]',
+              'disabled:opacity-50 disabled:cursor-not-allowed',
+              leftIcon && 'pl-10',
+              rightIcon && 'pr-10',
+              error && 'ring-2 ring-red-500',
+              className
+            )}
+            {...props}
+          />
+          {rightIcon && (
+            <div className="absolute inset-y-0 right-0 pr-3 flex items-center">
+              <span className="text-gray-400">{rightIcon}</span>
+            </div>
+          )}
+        </div>
+        {error && (
+          <p className="text-sm text-red-400">{error}</p>
+        )}
+        {helperText && !error && (
+          <p className="text-xs text-gray-500">{helperText}</p>
         )}
       </div>
-      {error && (
-        <p className="text-sm text-red-400">{error}</p>
-      )}
-      {helperText && !error && (
-        <p className="text-xs text-gray-500">{helperText}</p>
-      )}
-    </div>
-  );
-}
+    );
+  }
+);
 
 interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
   label?: string;

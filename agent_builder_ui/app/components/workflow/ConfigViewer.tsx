@@ -15,13 +15,26 @@ export function ConfigViewer({ config, isVisible, onToggle }: ConfigViewerProps)
   };
 
   const getConfigStats = () => {
+    // Safely parse metadata.updated date
+    let lastUpdated = 'N/A';
+    try {
+      if (config.metadata?.updated) {
+        const date = new Date(config.metadata.updated);
+        if (!isNaN(date.getTime())) {
+          lastUpdated = date.toISOString().replace('T', ' ').slice(0, 19);
+        }
+      }
+    } catch (e) {
+      // Invalid date, use N/A
+    }
+
     return {
       nodeCount: config.nodes.length,
       edgeCount: config.edges.length,
       configuredNodes: config.nodes.filter(node =>
         Object.keys(node.config).some(key => node.config[key])
       ).length,
-      lastUpdated: new Date(config.metadata.updated).toISOString().replace('T', ' ').slice(0, 19)
+      lastUpdated
     };
   };
 
@@ -161,7 +174,14 @@ export function ConfigViewer({ config, isVisible, onToggle }: ConfigViewerProps)
                         <div>
                           <span className="text-xs text-gray-400">Watermark Start:</span>
                           <div className="text-sm text-white">
-                            {new Date(config.properties.watermark_start_date).toISOString().replace('T', ' ').slice(0, 19)}
+                            {(() => {
+                              try {
+                                const date = new Date(config.properties.watermark_start_date);
+                                return !isNaN(date.getTime()) ? date.toISOString().replace('T', ' ').slice(0, 19) : config.properties.watermark_start_date;
+                              } catch {
+                                return config.properties.watermark_start_date;
+                              }
+                            })()}
                           </div>
                         </div>
                       )}
@@ -169,7 +189,14 @@ export function ConfigViewer({ config, isVisible, onToggle }: ConfigViewerProps)
                         <div>
                           <span className="text-xs text-gray-400">Watermark End:</span>
                           <div className="text-sm text-white">
-                            {new Date(config.properties.watermark_end_date).toISOString().replace('T', ' ').slice(0, 19)}
+                            {(() => {
+                              try {
+                                const date = new Date(config.properties.watermark_end_date);
+                                return !isNaN(date.getTime()) ? date.toISOString().replace('T', ' ').slice(0, 19) : config.properties.watermark_end_date;
+                              } catch {
+                                return config.properties.watermark_end_date;
+                              }
+                            })()}
                           </div>
                         </div>
                       )}
