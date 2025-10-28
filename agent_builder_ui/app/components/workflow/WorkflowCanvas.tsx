@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect, useRef } from 'react';
+import { useCallback, useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import {
   ReactFlow,
   useNodesState,
@@ -32,6 +32,15 @@ interface WorkflowCanvasProps {
   workflowId?: number | null;
 }
 
+// Imperative API for canvas manipulation (used by AI workflow builder)
+export interface WorkflowCanvasRef {
+  addNode: (nodeData: { node_type: string; position: { x: number; y: number }; config: any; connects_to?: string[]; label?: string; node_id?: string }) => string;
+  addEdge: (edgeData: { source: string; target: string; source_handle?: string; target_handle?: string }) => void;
+  updateNode: (nodeId: string, updates: { config?: any; position?: { x: number; y: number } }) => void;
+  removeNode: (nodeId: string) => void;
+  removeEdge: (edgeId: string) => void;
+}
+
 
 
 const nodeTypes = {
@@ -50,7 +59,7 @@ const nodeTypes = {
   toolbox: ToolboxNode,
 };
 
-export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExecuteNode, nodeExecutionCache, workflowId }: WorkflowCanvasProps) {
+export const WorkflowCanvas = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExecuteNode, nodeExecutionCache, workflowId }, ref) {
   // React Flow manages node/edge arrays internally
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -145,6 +154,192 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExe
     ));
   }, [setNodes, setEdges]);
 
+  // Update node config (used by both drag-drop and AI nodes)
+  const handleUpdateNodeConfig = useCallback((nodeId: string, config: Record<string, any>) => {
+    setNodes((nodes) =>
+      nodes.map((node) =>
+        node.id === nodeId
+          ? { ...node, data: { ...node.data, config } }
+          : node
+      )
+    );
+  }, [setNodes]);
+
+  // Get default config for node type
+  const getDefaultConfig = (nodeType: string) => {
+    switch (nodeType) {
+      case 'trigger_manual':
+        return {
+          description: '',
+          initial_data: ''
+        };
+      case 'trigger_schedule':
+        return {
+          schedule: '0 9 * * *',
+          timezone: 'UTC',
+          enabled: true,
+          description: ''
+        };
+      case 'trigger_chat':
+        return {
+          welcome_message: 'Hi! Send me a message to start the workflow.',
+          context_instructions: '',
+          description: ''
+        };
+      case 'database':
+        return {
+          connectionString: '',
+          query: '',
+          table: ''
+        };
+      case 'agent':
+        return {
+          agentId: null,
+          llm_credential_id: null,
+          prompts: [],
+          tools: []
+        };
+      case 'output':
+        return {
+          output_type: '',
+          credential_id: '',
+          table_name: '',
+          file_path: '',
+          file_format: ''
+        };
+      case 'filter':
+        return {
+          conditions: [],
+          operator: 'AND'
+        };
+      case 'script':
+        return {
+          script: '',
+          language: 'python',
+          timeout: 30
+        };
+      case 'conditional':
+        return {
+          condition: '',
+          operator: '=='
+        };
+      case 'toolbox':
+        return {
+          mcp_server_ids: [],
+          internal_tool_attachments: []
+        };
+      default:
+        return {};
+    }
+  };
+
+  // Expose imperative API for AI workflow builder
+  useImperativeHandle(ref, () => ({
+    addNode: (nodeData) => {
+      // Use AI's node_id if provided, otherwise generate random ID
+      const nodeId = nodeData.node_id || `node-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+      // Merge AI-provided config with default config for the node type
+      const defaultConfig = getDefaultConfig(nodeData.node_type);
+      const mergedConfig = { ...defaultConfig, ...(nodeData.config || {}) };
+
+      // Validate position or provide smart defaults to prevent NaN errors
+      const position = {
+        x: typeof nodeData.position?.x === 'number' ? nodeData.position.x : 100 + (Math.random() * 300),
+        y: typeof nodeData.position?.y === 'number' ? nodeData.position.y : 100 + (Math.random() * 300)
+      };
+
+      const newNode: Node = {
+        id: nodeId,
+        type: nodeData.node_type,
+        position: position,
+        draggable: true,
+        selectable: true,
+        data: {
+          id: nodeId,
+          label: nodeData.label || `${nodeData.node_type.charAt(0).toUpperCase() + nodeData.node_type.slice(1)} Node`,
+          config: mergedConfig,
+          onDelete: handleNodeDelete,
+          onConfig: handleNodeConfig,
+          onConfigChange: handleUpdateNodeConfig,
+          onExecute: onExecuteNode,
+          workflowId: workflowId,
+          onExecuteTrigger: handleExecuteTrigger,
+          onOpenChat: handleOpenChat,
+        }
+      };
+
+      setNodes((nds) => [...nds, newNode]);
+
+      // Auto-connect if specified
+      if (nodeData.connects_to && nodeData.connects_to.length > 0) {
+        const newEdges: Edge[] = nodeData.connects_to.map(targetId => ({
+          id: `${nodeId}-${targetId}-${Date.now()}`,
+          source: nodeId,
+          target: targetId,
+          type: 'smoothstep',
+          animated: true,
+          style: { stroke: '#1173d4', strokeWidth: 2 }
+        }));
+        setEdges((eds) => [...eds, ...newEdges]);
+      }
+
+      return nodeId;
+    },
+
+    addEdge: (edgeData) => {
+      const isContextInput = edgeData.target_handle === 'context-input';
+      const isToolsInput = edgeData.target_handle === 'tools-input';
+      const edgeColor = isContextInput || isToolsInput ? '#f59e0b' : '#1173d4';
+
+      const newEdge: Edge = {
+        id: `${edgeData.source}-${edgeData.target}-${Date.now()}`,
+        source: edgeData.source,
+        target: edgeData.target,
+        sourceHandle: edgeData.source_handle,
+        targetHandle: edgeData.target_handle,
+        type: 'smoothstep',
+        animated: true,
+        style: { stroke: edgeColor, strokeWidth: 2 }
+      };
+
+      setEdges((eds) => [...eds, newEdge]);
+    },
+
+    updateNode: (nodeId, updates) => {
+      setNodes((nds) =>
+        nds.map((node) =>
+          node.id === nodeId
+            ? {
+                ...node,
+                position: updates.position || node.position,
+                data: {
+                  ...node.data,
+                  config: updates.config ? { ...node.data.config, ...updates.config } : node.data.config
+                }
+              }
+            : node
+        )
+      );
+    },
+
+    removeNode: (nodeId) => {
+      setNodes((nds) => nds.filter((node) => node.id !== nodeId));
+      setEdges((eds) => eds.filter((edge) => edge.source !== nodeId && edge.target !== nodeId));
+    },
+
+    removeEdge: (edgeId) => {
+      console.log('[WorkflowCanvas] removeEdge called with ID:', edgeId);
+      setEdges((eds) => {
+        console.log('[WorkflowCanvas] Current edges:', eds.map(e => ({ id: e.id, source: e.source, target: e.target })));
+        const filtered = eds.filter((edge) => edge.id !== edgeId);
+        console.log('[WorkflowCanvas] Filtered edges (after removal):', filtered.map(e => ({ id: e.id, source: e.source, target: e.target })));
+        console.log('[WorkflowCanvas] Edge removed:', eds.length !== filtered.length);
+        return filtered;
+      });
+    }
+  }), [setNodes, setEdges, handleNodeDelete, handleNodeConfig, handleUpdateNodeConfig, onExecuteNode, workflowId, handleExecuteTrigger, handleOpenChat]);
+
   // Simple one-time initialization
   const [initialized, setInitialized] = useState(false);
   const [hasInitialized, setHasInitialized] = useState(false);
@@ -183,6 +378,8 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExe
           id: String(node.id),  // Convert backend integer ID to string for React Flow
           type: node.type,
           position: node.position || { x: 100 + index * 200, y: 100 },
+          draggable: true,
+          selectable: true,
           data: {
             id: String(node.id),  // React Flow ID (string)
             backendId: node.id,    // Keep original backend ID (integer) for API calls
@@ -265,18 +462,6 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExe
   // Set initial viewport to prevent zoom issues
   const defaultViewport = { x: 0, y: 0, zoom: 0.8 };
 
-  const openNodeConfig = useCallback((nodeId: string, nodeType: string, nodeData: any) => {
-    setConfigModal({
-      isOpen: true,
-      nodeId,
-      nodeType,
-      nodeData,
-      edges: edges,
-      nodes: nodes,
-      executionCache: nodeExecutionCache || {},
-    });
-  }, [edges, nodes, nodeExecutionCache]);
-
   const closeNodeConfig = useCallback(() => {
     setConfigModal({
       isOpen: false,
@@ -333,27 +518,8 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExe
   // Handle node double-click
   const onNodeDoubleClick = useCallback((event: any, node: any) => {
     event.stopPropagation();
-    openNodeConfig(node.id, node.type, node.data);
-  }, [openNodeConfig]);
-
-  // Delete node function
-  const deleteNode = useCallback((nodeId: string) => {
-    setNodes((nodes) => nodes.filter((node) => node.id !== nodeId));
-    setEdges((edges) => edges.filter((edge) =>
-      edge.source !== nodeId && edge.target !== nodeId
-    ));
-  }, [setNodes, setEdges]);
-
-  // Update node config
-  const updateNodeConfig = useCallback((nodeId: string, config: Record<string, any>) => {
-    setNodes((nodes) =>
-      nodes.map((node) =>
-        node.id === nodeId
-          ? { ...node, data: { ...node.data, config } }
-          : node
-      )
-    );
-  }, [setNodes]);
+    handleNodeConfig(node.id, node.type, node.data);
+  }, [handleNodeConfig]);
 
   // Connect nodes
   const onConnect = useCallback(
@@ -433,11 +599,13 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExe
         id: nodeId,
         type,
         position,
+        draggable: true,
+        selectable: true,
         data: {
           label: `${type.charAt(0).toUpperCase() + type.slice(1)} Node`,
-          onDelete: deleteNode,
-          onConfig: openNodeConfig,
-          onConfigChange: updateNodeConfig,
+          onDelete: handleNodeDelete,
+          onConfig: handleNodeConfig,
+          onConfigChange: handleUpdateNodeConfig,
           onExecute: onExecuteNode,
           id: nodeId,
           config: getDefaultConfig(type),
@@ -449,76 +617,8 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExe
 
       setNodes((nds) => nds.concat(newNode));
     },
-    [setNodes, deleteNode, openNodeConfig, updateNodeConfig, onExecuteNode, workflowId, handleExecuteTrigger, handleOpenChat]
+    [setNodes, handleNodeDelete, handleNodeConfig, handleUpdateNodeConfig, onExecuteNode, workflowId, handleExecuteTrigger, handleOpenChat]
   );
-
-  // Get default config for node type
-  const getDefaultConfig = (nodeType: string) => {
-    switch (nodeType) {
-      case 'trigger_manual':
-        return {
-          description: '',
-          initial_data: ''
-        };
-      case 'trigger_schedule':
-        return {
-          schedule: '0 9 * * *',
-          timezone: 'UTC',
-          enabled: true,
-          description: ''
-        };
-      case 'trigger_chat':
-        return {
-          welcome_message: 'Hi! Send me a message to start the workflow.',
-          context_instructions: '',
-          description: ''
-        };
-      case 'database':
-        return {
-          connectionString: '',
-          query: '',
-          table: ''
-        };
-      case 'agent':
-        return {
-          agentId: null,
-          llm_credential_id: null,
-          prompts: [],
-          tools: []
-        };
-      case 'output':
-        return {
-          output_type: '',
-          credential_id: '',
-          table_name: '',
-          file_path: '',
-          file_format: ''
-        };
-      case 'filter':
-        return {
-          conditions: [],
-          operator: 'AND'
-        };
-      case 'script':
-        return {
-          script: '',
-          language: 'python',
-          timeout: 30
-        };
-      case 'conditional':
-        return {
-          condition: '',
-          operator: '=='
-        };
-      case 'toolbox':
-        return {
-          mcp_server_ids: [],
-          internal_tool_attachments: []
-        };
-      default:
-        return {};
-    }
-  };
 
   return (
     <div className="w-full h-full flex">
@@ -651,4 +751,4 @@ export function WorkflowCanvas({ onConfigChange, initialConfig, isLoading, onExe
       <ToastContainer toasts={toasts} onRemove={removeToast} />
     </div>
   );
-}
+});

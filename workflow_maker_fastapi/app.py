@@ -973,11 +973,30 @@ async def generate_workflow(body: GenerateRequest) -> StreamingResponse:
         messages = await load_messages(session_id)
         print(f"📚 Loaded {len(messages)} messages from history")
 
-        # Build SupervisorDeps with current config
+        # Load pending tasks from Django database
+        pending_tasks = []
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                url = f"{DJANGO_API_BASE}/api/builder-tools/get_session_tasks/"
+                params = {"session_id": session_id}
+                print(f"📋 Loading pending tasks from Django: {url}")
+                response = await client.get(url, params=params)
+
+                if response.status_code == 200:
+                    data = response.json()
+                    pending_tasks = data.get("tasks", [])
+                    print(f"✅ Loaded {len(pending_tasks)} pending tasks")
+                else:
+                    print(f"⚠️ Could not load tasks (status {response.status_code}), using empty list")
+        except Exception as e:
+            print(f"⚠️ Error loading tasks: {e}, using empty list")
+
+        # Build SupervisorDeps with current config and pending tasks
         workflow_config = WorkflowConfig(**(current_config or {}))
         deps = SupervisorDeps(
             session_id=session_id,
-            current_config=workflow_config
+            current_config=workflow_config,
+            pending_tasks=pending_tasks
         )
 
         print(f"👔 Starting supervisor_agent with:")
@@ -985,6 +1004,7 @@ async def generate_workflow(body: GenerateRequest) -> StreamingResponse:
         print(f"   - Mode: {'EDIT' if deps.is_editing else 'NEW'}")
         print(f"   - Current nodes: {len(workflow_config.nodes)}")
         print(f"   - Current edges: {len(workflow_config.edges)}")
+        print(f"   - Pending tasks: {len(deps.pending_tasks)}")
 
         # Run supervisor agent (non-streaming for structured output)
         # NOTE: With output_type, Pydantic AI builds structured data internally
@@ -1011,6 +1031,24 @@ async def generate_workflow(body: GenerateRequest) -> StreamingResponse:
         # Persist new messages (both the user request and the model response).
         await add_messages_blob(session_id, result.new_messages_json())
         print(f"💾 Persisted new messages to database")
+
+        # Save updated pending tasks back to Django database
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                url = f"{DJANGO_API_BASE}/api/builder-tools/save_session_tasks/"
+                json_body = {
+                    "session_id": session_id,
+                    "tasks": deps.pending_tasks
+                }
+                print(f"📋 Saving {len(deps.pending_tasks)} pending tasks to Django")
+                response = await client.post(url, json=json_body)
+
+                if response.status_code == 200:
+                    print(f"✅ Tasks saved successfully")
+                else:
+                    print(f"⚠️ Failed to save tasks (status {response.status_code})")
+        except Exception as e:
+            print(f"⚠️ Error saving tasks: {e}")
 
         # Track usage statistics
         usage = result.usage()

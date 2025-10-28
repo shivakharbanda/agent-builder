@@ -257,6 +257,13 @@ export function DatabaseNode({ data, selected }: { data: any; selected: boolean 
         <div className="mt-2 text-xs text-green-400">✓ Configured</div>
       )}
 
+      {/* Input Handle */}
+      <Handle
+        type="target"
+        position={Position.Left}
+        className="w-3 h-3 bg-[#1173d4] border-2 border-[#1a2633]"
+      />
+
       {/* Output Handle */}
       <Handle
         type="source"

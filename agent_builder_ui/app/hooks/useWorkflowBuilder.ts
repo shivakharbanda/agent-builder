@@ -31,7 +31,13 @@ const createClient = (): AxiosInstance => {
   return client;
 };
 
-export const useWorkflowBuilder = () => {
+interface UseWorkflowBuilderOptions {
+  onAIAction?: (structuredResponse: any) => void;
+}
+
+export const useWorkflowBuilder = (options?: UseWorkflowBuilderOptions) => {
+  const { onAIAction } = options || {};
+
   const [session, setSession] = useState<WorkflowBuilderSession>({
     sessionId: null,
     messages: [],
@@ -102,6 +108,7 @@ export const useWorkflowBuilder = () => {
         body: JSON.stringify({
           prompt: message,
           session_id: session.sessionId,
+          current_workflow: session.finalConfig, // Send current workflow state for context
         }),
       });
 
@@ -127,191 +134,159 @@ export const useWorkflowBuilder = () => {
           try {
             const data = JSON.parse(line);
 
-            // Handle structured responses from new multi-agent system
-            if (data.role === 'assistant' && data.structured === true) {
-              const structuredResponse = data.response;
-              let messageContent = '';
-
-              // Extract message based on action type and update workflow config in real-time
-              switch (structuredResponse.action_type) {
-                case 'conversation':
-                  // Show the conversational message
-                  messageContent = structuredResponse.data.message;
-                  break;
-
-                case 'node_add':
-                  messageContent = structuredResponse.message;
-
-                  // Actually add node to workflow config in real-time
-                  const nodeData = structuredResponse.data;
-                  const newNode = {
-                    id: `node-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-                    type: nodeData.node_type,
-                    position: nodeData.position || { x: 100, y: 200 },
-                    config: nodeData.config || {}
-                  };
-
-                  setSession(prev => {
-                    const currentNodes = prev.finalConfig?.nodes || [];
-                    const currentEdges = prev.finalConfig?.edges || [];
-                    const now = new Date().toISOString();
-
-                    return {
-                      ...prev,
-                      finalConfig: {
-                        nodes: [...currentNodes, newNode],
-                        edges: currentEdges,
-                        metadata: {
-                          name: 'Untitled Workflow',
-                          description: '',
-                          version: '1.0.0',
-                          ...(prev.finalConfig?.metadata || {}),
-                          created: prev.finalConfig?.metadata?.created || now,
-                          updated: now
-                        },
-                        properties: prev.finalConfig?.properties || {}
-                      }
-                    };
-                  });
-                  break;
-
-                case 'edge_add':
-                  messageContent = structuredResponse.message;
-
-                  // Add edge connecting nodes
-                  const edgeData = structuredResponse.data;
-                  const newEdge = {
-                    id: `edge-${Date.now()}`,
-                    source: edgeData.source,
-                    target: edgeData.target,
-                    sourceHandle: edgeData.source_handle,
-                    targetHandle: edgeData.target_handle
-                  };
-
-                  setSession(prev => {
-                    const currentEdges = prev.finalConfig?.edges || [];
-
-                    return {
-                      ...prev,
-                      finalConfig: {
-                        ...prev.finalConfig,
-                        edges: [...currentEdges, newEdge]
-                      }
-                    };
-                  });
-                  break;
-
-                case 'node_edit':
-                  messageContent = structuredResponse.message;
-
-                  // Update existing node configuration
-                  const editData = structuredResponse.data;
-                  setSession(prev => {
-                    const updatedNodes = (prev.finalConfig?.nodes || []).map(node =>
-                      node.id === editData.node_id
-                        ? {
-                            ...node,
-                            config: { ...node.config, ...editData.config_updates },
-                            position: editData.position_update || node.position
-                          }
-                        : node
-                    );
-
-                    return {
-                      ...prev,
-                      finalConfig: {
-                        ...prev.finalConfig,
-                        nodes: updatedNodes
-                      }
-                    };
-                  });
-                  break;
-
-                case 'node_remove':
-                  messageContent = structuredResponse.message;
-
-                  // Remove node and its connected edges
-                  const removeData = structuredResponse.data;
-                  setSession(prev => {
-                    const filteredNodes = (prev.finalConfig?.nodes || []).filter(
-                      node => node.id !== removeData.node_id
-                    );
-                    const filteredEdges = (prev.finalConfig?.edges || []).filter(
-                      edge => edge.source !== removeData.node_id && edge.target !== removeData.node_id
-                    );
-
-                    return {
-                      ...prev,
-                      finalConfig: {
-                        ...prev.finalConfig,
-                        nodes: filteredNodes,
-                        edges: filteredEdges
-                      }
-                    };
-                  });
-                  break;
-
-                case 'edge_remove':
-                  messageContent = structuredResponse.message;
-
-                  // Remove specific edge
-                  const edgeRemoveData = structuredResponse.data;
-                  setSession(prev => {
-                    const filteredEdges = (prev.finalConfig?.edges || []).filter(
-                      edge => edge.id !== edgeRemoveData.edge_id
-                    );
-
-                    return {
-                      ...prev,
-                      finalConfig: {
-                        ...prev.finalConfig,
-                        edges: filteredEdges
-                      }
-                    };
-                  });
-                  break;
-
-                case 'workflow_complete':
-                  messageContent = structuredResponse.data.summary;
-
-                  // Mark workflow as complete
-                  setSession(prev => ({
-                    ...prev,
-                    isComplete: true
-                  }));
-                  break;
-
-                default:
-                  // Fallback to top-level message
-                  messageContent = structuredResponse.message;
-              }
-
-              // Update AI message in real-time
-              setSession(prev => {
-                const newMessages = [...prev.messages];
-                const lastMessage = newMessages[newMessages.length - 1];
-
-                if (lastMessage && lastMessage.role === 'model') {
-                  // Update existing message
-                  lastMessage.content = messageContent;
-                  lastMessage.timestamp = data.timestamp || new Date().toISOString();
-                } else {
-                  // Add new message
-                  newMessages.push({
-                    role: 'model',
-                    content: messageContent,
-                    timestamp: data.timestamp || new Date().toISOString(),
-                  });
-                }
-
-                return { ...prev, messages: newMessages };
-              });
-            }
-            // Handle legacy format (backward compatibility)
-            else if (data.role === 'model' && data.content) {
+            // Handle v2 structured responses
+            if ((data.role === 'assistant' || data.role === 'model') && data.content) {
               aiMessage = data.content;
 
-              // Update AI message in real-time
+              // Check if this is a node_add action
+              if (data.action === 'node_add' && data.data) {
+                console.log('🎯 NODE ADD ACTION:', data.data);
+
+                // Extract node data
+                const nodeData = data.data;
+
+                // Create new node for workflow
+                const newNode = {
+                  id: nodeData.node_id,
+                  type: nodeData.type,
+                  position: nodeData.position,
+                  config: nodeData.config,
+                  data: {
+                    label: nodeData.label || nodeData.type
+                  }
+                };
+
+                // Update workflow config
+                setSession(prev => {
+                  const currentNodes = prev.finalConfig?.nodes || [];
+                  const currentEdges = prev.finalConfig?.edges || [];
+
+                  return {
+                    ...prev,
+                    finalConfig: {
+                      nodes: [...currentNodes, newNode],
+                      edges: currentEdges,
+                      metadata: prev.finalConfig?.metadata || {}
+                    }
+                  };
+                });
+
+                // Callback for imperative canvas updates
+                // Format matches what create.tsx handleAIAction expects
+                if (onAIAction) {
+                  onAIAction({
+                    action_type: 'node_add',
+                    data: {
+                      node_id: nodeData.node_id,  // Pass AI's node ID to canvas
+                      node_type: nodeData.type,
+                      position: nodeData.position,
+                      config: nodeData.config,
+                      label: nodeData.label
+                    }
+                  });
+                }
+              }
+
+              // Check if this is an edge_add action
+              if (data.action === 'edge_add' && data.data) {
+                console.log('🔗 EDGE ADD ACTION:', data.data);
+
+                // Extract edge data
+                const edgeData = data.data;
+
+                // Don't manually update finalConfig - let canvas be the source of truth
+                // Canvas will create the edge with proper ID and sync back via onConfigChange
+
+                // Callback for imperative canvas updates
+                if (onAIAction) {
+                  onAIAction({
+                    action_type: 'edge_add',
+                    data: {
+                      source_node_id: edgeData.source_node_id,
+                      target_node_id: edgeData.target_node_id,
+                      source_handle: edgeData.source_handle,
+                      target_handle: edgeData.target_handle
+                    }
+                  });
+                }
+              }
+
+              // Check if this is a node_remove action
+              if (data.action === 'node_remove' && data.data) {
+                console.log('🗑️ NODE REMOVE ACTION:', data.data);
+
+                const removeData = data.data;
+
+                // Update workflow config - remove node and associated edges
+                setSession(prev => {
+                  const currentNodes = prev.finalConfig?.nodes || [];
+                  const currentEdges = prev.finalConfig?.edges || [];
+
+                  return {
+                    ...prev,
+                    finalConfig: {
+                      nodes: currentNodes.filter(n => n.id !== removeData.node_id),
+                      edges: currentEdges.filter(e =>
+                        e.source !== removeData.node_id && e.target !== removeData.node_id
+                      ),
+                      metadata: prev.finalConfig?.metadata || {}
+                    }
+                  };
+                });
+
+                // Callback for imperative canvas updates
+                if (onAIAction) {
+                  onAIAction({
+                    action_type: 'node_remove',
+                    data: {
+                      node_id: removeData.node_id
+                    }
+                  });
+                }
+              }
+
+              // Check if this is an edge_remove action
+              if (data.action === 'edge_remove' && data.data) {
+                console.log('✂️ EDGE REMOVE ACTION:', data.data);
+
+                const removeEdgeData = data.data;
+
+                // Update workflow config - remove edge
+                setSession(prev => {
+                  const currentNodes = prev.finalConfig?.nodes || [];
+                  const currentEdges = prev.finalConfig?.edges || [];
+
+                  console.log('[useWorkflowBuilder] Current edges before removal:', currentEdges.map(e => ({ id: e.id, source: e.source, target: e.target })));
+                  console.log('[useWorkflowBuilder] Attempting to remove edge:', removeEdgeData.edge_id);
+
+                  const filteredEdges = currentEdges.filter(e => e.id !== removeEdgeData.edge_id);
+                  console.log('[useWorkflowBuilder] Edges after filter:', filteredEdges.map(e => ({ id: e.id, source: e.source, target: e.target })));
+
+                  return {
+                    ...prev,
+                    finalConfig: {
+                      nodes: currentNodes,
+                      edges: filteredEdges,
+                      metadata: prev.finalConfig?.metadata || {}
+                    }
+                  };
+                });
+
+                // Callback for imperative canvas updates
+                if (onAIAction) {
+                  console.log('[useWorkflowBuilder] Calling onAIAction for edge removal');
+                  onAIAction({
+                    action_type: 'edge_remove',
+                    data: {
+                      edge_id: removeEdgeData.edge_id
+                    }
+                  });
+                } else {
+                  console.warn('[useWorkflowBuilder] onAIAction callback is not defined!');
+                }
+              }
+
+              // Update chat messages
               setSession(prev => {
                 const newMessages = [...prev.messages];
                 const lastMessage = newMessages[newMessages.length - 1];
@@ -345,7 +320,7 @@ export const useWorkflowBuilder = () => {
     } finally {
       setSession(prev => ({ ...prev, isLoading: false }));
     }
-  }, [session.sessionId, session.isLoading]);
+  }, [session.sessionId, session.isLoading, onAIAction]);
 
   const checkFinalization = useCallback(async (): Promise<any | null> => {
     if (!session.sessionId) return null;

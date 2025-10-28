@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import type { Route } from './+types/create';
 
 import { Layout } from '../../components/layout/Layout';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
-import { WorkflowCanvas } from '../../components/workflow/WorkflowCanvas';
+import { WorkflowCanvas, type WorkflowCanvasRef } from '../../components/workflow/WorkflowCanvas';
 import type { WorkflowConfig } from '../../components/workflow/types';
 import { NodePalette } from '../../components/workflow/NodePalette';
 import { ChatInterface } from '../../components/workflow/ChatInterface';
@@ -78,6 +78,9 @@ export default function CreateWorkflow() {
 
   // Node execution results cache (for input mapping)
   const [nodeExecutionCache, setNodeExecutionCache] = useState<Record<string, any>>({});
+
+  // Canvas ref for imperative API (AI workflow builder)
+  const canvasRef = useRef<WorkflowCanvasRef>(null);
 
   // Form submission hook - use different API based on mode
   const { loading: saving, error: saveError, submit: submitWorkflow } = useFormSubmit(
@@ -171,6 +174,90 @@ export default function CreateWorkflow() {
     setActiveTab('manual');
 
     showToast('✨ Workflow structure created! Configure node details and save.', 'success');
+  };
+
+  // AI Action Handler - Applies AI actions directly to canvas via imperative API
+  const handleAIAction = (structuredResponse: any) => {
+    if (!canvasRef.current) {
+      console.warn('[create.tsx] Canvas ref not available, skipping AI action');
+      return;
+    }
+
+    console.log('[create.tsx] Handling AI action:', structuredResponse);
+
+    try {
+      switch (structuredResponse.action_type) {
+        case 'node_add':
+          const nodeData = structuredResponse.data;
+          const nodeId = canvasRef.current.addNode({
+            node_id: nodeData.node_id,  // Pass AI's node_id to canvas
+            node_type: nodeData.node_type,
+            position: nodeData.position,
+            config: nodeData.config,
+            connects_to: nodeData.connects_to,
+            label: nodeData.label
+          });
+          console.log('[create.tsx] Added node via canvas API:', nodeId);
+          break;
+
+        case 'edge_add':
+          const edgeData = structuredResponse.data;
+          canvasRef.current.addEdge({
+            source: edgeData.source_node_id,
+            target: edgeData.target_node_id,
+            source_handle: edgeData.source_handle,
+            target_handle: edgeData.target_handle
+          });
+          console.log('[create.tsx] Added edge via canvas API:', `${edgeData.source_node_id} → ${edgeData.target_node_id}`);
+          break;
+
+        case 'node_edit':
+          const editData = structuredResponse.data;
+          canvasRef.current.updateNode(editData.node_id, {
+            config: editData.config_updates,
+            position: editData.position_update
+          });
+          console.log('[create.tsx] Updated node via canvas API:', editData.node_id);
+          break;
+
+        case 'node_remove':
+          const removeData = structuredResponse.data;
+          canvasRef.current.removeNode(removeData.node_id);
+          console.log('[create.tsx] Removed node via canvas API:', removeData.node_id);
+          break;
+
+        case 'edge_remove':
+          const edgeRemoveData = structuredResponse.data;
+          console.log('[create.tsx] Edge remove action received');
+          console.log('[create.tsx] Edge ID to remove:', edgeRemoveData.edge_id);
+          console.log('[create.tsx] Canvas ref exists:', !!canvasRef.current);
+
+          if (canvasRef.current) {
+            console.log('[create.tsx] Calling removeEdge on canvas...');
+            canvasRef.current.removeEdge(edgeRemoveData.edge_id);
+            console.log('[create.tsx] removeEdge called successfully');
+          } else {
+            console.error('[create.tsx] Canvas ref is null! Cannot remove edge');
+          }
+          break;
+
+        case 'conversation':
+          // Just a message, no canvas action needed
+          console.log('[create.tsx] AI conversation message:', structuredResponse.data.message);
+          break;
+
+        case 'workflow_complete':
+          console.log('[create.tsx] Workflow building complete:', structuredResponse.data.summary);
+          showToast('Workflow complete! You can now save it.', 'success');
+          break;
+
+        default:
+          console.warn('[create.tsx] Unknown AI action type:', structuredResponse.action_type);
+      }
+    } catch (error) {
+      console.error('[create.tsx] Error handling AI action:', error);
+      showToast('Error applying AI action', 'error');
+    }
   };
 
   const handleSaveWorkflow = async () => {
@@ -497,6 +584,7 @@ export default function CreateWorkflow() {
                 <ChatInterface
                   onCommand={handleChatCommand}
                   onWorkflowConfigComplete={handleWorkflowConfigComplete}
+                  onAIAction={handleAIAction}
                   projectId={projectId || 1}
                 />
               </div>
@@ -507,6 +595,7 @@ export default function CreateWorkflow() {
           <main className="flex-grow bg-[#111a22] relative">
             <WorkflowErrorBoundary>
               <WorkflowCanvas
+                ref={canvasRef}
                 key={canvasKey}
                 onConfigChange={handleConfigChange}
                 initialConfig={workflowConfig}

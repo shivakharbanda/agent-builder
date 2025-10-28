@@ -25,7 +25,7 @@ class SupervisorDeps(BaseModel):
     """
     Dependencies for supervisor agent.
 
-    Includes session context and current workflow state for incremental building.
+    Includes session context, current workflow state, and task queue for incremental building.
     """
     session_id: str = Field(
         description="Workflow builder session ID (maps to Django user/project)"
@@ -33,6 +33,10 @@ class SupervisorDeps(BaseModel):
     current_config: WorkflowConfig = Field(
         default_factory=WorkflowConfig,
         description="Current workflow configuration (for incremental/edit mode)"
+    )
+    pending_tasks: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Task queue for workflow building - tracks multi-step operations (add → configure → connect)"
     )
 
     @property
@@ -64,6 +68,24 @@ class SupervisorDeps(BaseModel):
         # Find rightmost node
         max_x = max(node.get('position', {}).get('x', 0) for node in self.current_config.nodes)
         return {"x": max_x + 300, "y": 200}
+
+    def get_pending_task(self) -> Optional[dict]:
+        """Get the next pending task from queue."""
+        for task in self.pending_tasks:
+            if task.get('status') == 'pending':
+                return task
+        return None
+
+    def mark_task_completed(self, task_id: str) -> None:
+        """Mark a task as completed."""
+        for task in self.pending_tasks:
+            if task.get('id') == task_id:
+                task['status'] = 'completed'
+                break
+
+    def add_task(self, task: dict[str, Any]) -> None:
+        """Add a new task to the queue."""
+        self.pending_tasks.append(task)
 
 
 class WorkerDeps(BaseModel):

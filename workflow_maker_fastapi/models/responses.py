@@ -9,34 +9,44 @@ from pydantic import BaseModel, Field
 from typing import Literal, Optional, Any
 
 
+class Position(BaseModel):
+    """
+    Canvas position with explicit x and y coordinates.
+
+    This model ensures proper schema generation for AI models,
+    avoiding the additionalProperties issue with dict[str, float].
+    """
+    x: float = Field(description="X coordinate on canvas")
+    y: float = Field(description="Y coordinate on canvas")
+
+
 class NodeAddAction(BaseModel):
     """
     Action to add a new node to the workflow.
 
+    Note: This creates the node with position, label, AND complete configuration.
+    Delegate to worker first to get resources, then add node with full config.
+
     Example:
         {
             "node_type": "database",
-            "position": {"x": 100, "y": 200},
+            "position": {"x": 400, "y": 200},
             "config": {
-                "credential_id": "5",
+                "credential_id": 1,
                 "query": "SELECT * FROM customers"
             },
-            "connects_to": ["node_2"],
             "label": "Customer Database"
         }
     """
     node_type: str = Field(
         description="Type of node to add (database, agent, filter, etc.)"
     )
-    position: dict[str, float] = Field(
-        description="Canvas position {x: number, y: number}"
+    position: Position = Field(
+        description="Canvas position with x and y coordinates"
     )
     config: dict[str, Any] = Field(
-        description="Node configuration (fields specific to node type)"
-    )
-    connects_to: Optional[list[str]] = Field(
-        default=None,
-        description="List of node IDs to connect this node to (creates edges)"
+        default_factory=dict,
+        description="Node configuration - should be complete with all required fields. Use worker to get resources before adding node."
     )
     label: Optional[str] = Field(
         default=None,
@@ -47,6 +57,9 @@ class NodeAddAction(BaseModel):
 class NodeEditAction(BaseModel):
     """
     Action to edit an existing node's configuration.
+
+    Use ONLY for user-requested changes to existing nodes, NOT for initial configuration.
+    Initial configuration should be done in node_add with full config.
 
     Only includes fields that need to be updated (partial update).
 
@@ -64,9 +77,9 @@ class NodeEditAction(BaseModel):
     config_updates: dict[str, Any] = Field(
         description="Partial config updates (only changed fields)"
     )
-    position_update: Optional[dict[str, float]] = Field(
+    position_update: Optional[Position] = Field(
         default=None,
-        description="Optional position update {x: number, y: number}"
+        description="Optional position update with x and y coordinates"
     )
 
 

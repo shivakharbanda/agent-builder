@@ -14,13 +14,19 @@ interface ChatMessage {
 interface ChatInterfaceProps {
   onCommand?: (command: string) => void;
   onWorkflowConfigComplete?: (config: any) => void;
+  onAIAction?: (structuredResponse: any) => void;
   projectId?: number;
 }
 
-export function ChatInterface({ onCommand, onWorkflowConfigComplete, projectId = 1 }: ChatInterfaceProps) {
-  const { session, createSession, sendMessage: sendWorkflowMessage, checkFinalization } = useWorkflowBuilder();
+export function ChatInterface({ onCommand, onWorkflowConfigComplete, onAIAction, projectId = 1 }: ChatInterfaceProps) {
+  const { session, createSession, sendMessage: sendWorkflowMessage, checkFinalization } = useWorkflowBuilder({
+    onAIAction
+  });
   const [inputValue, setInputValue] = useState('');
+  const [showNodeAdded, setShowNodeAdded] = useState(false);
+  const [lastNodeLabel, setLastNodeLabel] = useState('');
   const prevCompleteState = useRef(false);
+  const prevNodeCount = useRef(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -75,6 +81,18 @@ export function ChatInterface({ onCommand, onWorkflowConfigComplete, projectId =
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [session.messages, session.isLoading]);
+
+  // Show notification when node is added
+  useEffect(() => {
+    const nodeCount = session.finalConfig?.nodes?.length || 0;
+    if (nodeCount > prevNodeCount.current) {
+      const lastNode = session.finalConfig?.nodes[nodeCount - 1];
+      setLastNodeLabel(lastNode?.data?.label || lastNode?.type || 'Node');
+      setShowNodeAdded(true);
+      setTimeout(() => setShowNodeAdded(false), 3000); // Hide after 3 seconds
+    }
+    prevNodeCount.current = nodeCount;
+  }, [session.finalConfig]);
 
   const handleSend = async () => {
     if (!session.sessionId || session.isLoading || !inputValue.trim()) return;
@@ -155,6 +173,15 @@ export function ChatInterface({ onCommand, onWorkflowConfigComplete, projectId =
         )}
         <div ref={messagesEndRef} />
       </div>
+
+      {showNodeAdded && (
+        <div className="mb-2 p-2 bg-blue-500/10 border border-blue-500/20 rounded-md flex-shrink-0 animate-slide-in">
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-blue-400 text-sm">add_circle</span>
+            <span className="text-xs text-blue-400 font-medium">Node added: {lastNodeLabel}</span>
+          </div>
+        </div>
+      )}
 
       {session.isComplete && session.finalConfig && (
         <div className="mb-2 p-2 bg-green-500/10 border border-green-500/20 rounded-md flex-shrink-0">

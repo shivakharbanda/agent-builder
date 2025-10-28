@@ -187,12 +187,13 @@ async def get_credentials(ctx: RunContext[WorkerDeps], search: str = "", categor
             data = response.json()
             credentials = [CredentialInfo(**item) for item in data]
 
-            summary = f"Found {len(credentials)} credentials"
             if credentials:
-                cred_names = ", ".join(c.name for c in credentials[:3])
+                cred_list = ", ".join(f"{c.name} (ID: {c.id})" for c in credentials[:3])
                 if len(credentials) > 3:
-                    cred_names += f" and {len(credentials) - 3} more"
-                summary += f": {cred_names}"
+                    cred_list += f" and {len(credentials) - 3} more"
+                summary = f"Found {len(credentials)} credential(s): {cred_list}. Use the ID in your node config."
+            else:
+                summary = "No credentials found."
 
             print(f"✅ get_credentials SUCCESS: {summary}")
 
@@ -256,12 +257,13 @@ async def get_agents(ctx: RunContext[WorkerDeps], search: str = "") -> WorkerToo
             data = response.json()
             agents = [AgentInfo(**item) for item in data]
 
-            summary = f"Found {len(agents)} agents"
             if agents:
-                agent_names = ", ".join(a.name for a in agents[:3])
+                agent_list = ", ".join(f"{a.name} (ID: {a.id})" for a in agents[:3])
                 if len(agents) > 3:
-                    agent_names += f" and {len(agents) - 3} more"
-                summary += f": {agent_names}"
+                    agent_list += f" and {len(agents) - 3} more"
+                summary = f"Found {len(agents)} agent(s): {agent_list}. Use the ID in your node config."
+            else:
+                summary = "No agents found."
 
             print(f"✅ get_agents SUCCESS: {summary}")
 
@@ -324,9 +326,19 @@ async def inspect_database_schema(ctx: RunContext[WorkerDeps], credential_id: in
             response.raise_for_status()
             data = response.json()
 
-            # Extract key info for summary
+            # Extract key info for summary - ALWAYS mention credential_id prominently
             table_count = len(data.get("metadata", {}).get("tables", []))
-            summary = f"Inspected {data['credential_name']} ({data['database_type']}): {table_count} tables"
+            tables = data.get("metadata", {}).get("tables", [])
+            table_names = ", ".join(t.get("name", "unknown") for t in tables[:3])
+            if len(tables) > 3:
+                table_names += f" and {len(tables) - 3} more"
+
+            summary = (
+                f"Successfully inspected schema for credential {credential_id}. "
+                f"Database: {data['credential_name']} ({data['database_type']}). "
+                f"Found {table_count} table(s): {table_names}. "
+                f"IMPORTANT: Use credential_id={credential_id} in your database node config."
+            )
 
             print(f"✅ inspect_database_schema SUCCESS: {summary}")
 

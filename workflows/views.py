@@ -1326,3 +1326,106 @@ class WorkflowBuilderToolsViewSet(viewsets.ViewSet):
                 {'error': f'Query execution failed: {str(e)}'},
                 status=500
             )
+
+    @action(detail=False, methods=['get'])
+    def get_session_tasks(self, request):
+        """
+        Get pending tasks for a workflow builder session.
+
+        Query params:
+            - session_id: Required workflow builder session ID
+
+        Returns:
+            - tasks: List of pending task objects
+        """
+        from workflows.models import WorkflowBuilderSession
+
+        session_id = request.query_params.get('session_id')
+
+        if not session_id:
+            return Response(
+                {'error': 'session_id is required'},
+                status=400
+            )
+
+        try:
+            session = WorkflowBuilderSession.objects.get(
+                session_id=session_id,
+                is_active=True
+            )
+
+            # Return tasks from pending_tasks_json field
+            tasks = session.pending_tasks_json or []
+
+            return Response({
+                'session_id': str(session_id),
+                'tasks': tasks
+            })
+
+        except WorkflowBuilderSession.DoesNotExist:
+            return Response(
+                {'error': f'Session {session_id} not found or expired'},
+                status=404
+            )
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to get tasks: {str(e)}'},
+                status=500
+            )
+
+    @action(detail=False, methods=['post'])
+    def save_session_tasks(self, request):
+        """
+        Save/update pending tasks for a workflow builder session.
+
+        Request body:
+            - session_id: Required workflow builder session ID
+            - tasks: List of task objects to save
+
+        Returns:
+            - success: Boolean indicating success
+            - task_count: Number of tasks saved
+        """
+        from workflows.models import WorkflowBuilderSession
+
+        session_id = request.data.get('session_id')
+        tasks = request.data.get('tasks')
+
+        if not session_id:
+            return Response(
+                {'error': 'session_id is required'},
+                status=400
+            )
+
+        if tasks is None:
+            return Response(
+                {'error': 'tasks field is required'},
+                status=400
+            )
+
+        try:
+            session = WorkflowBuilderSession.objects.get(
+                session_id=session_id,
+                is_active=True
+            )
+
+            # Save tasks to pending_tasks_json field
+            session.pending_tasks_json = tasks
+            session.save(update_fields=['pending_tasks_json'])
+
+            return Response({
+                'success': True,
+                'session_id': str(session_id),
+                'task_count': len(tasks)
+            })
+
+        except WorkflowBuilderSession.DoesNotExist:
+            return Response(
+                {'error': f'Session {session_id} not found or expired'},
+                status=404
+            )
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to save tasks: {str(e)}'},
+                status=500
+            )

@@ -296,6 +296,11 @@ class WorkflowBuilderSession(BaseModel):
         default=True,
         help_text="Whether session is still valid"
     )
+    pending_tasks_json = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Task queue for incremental workflow building (multi-step operations)"
+    )
 
     def __str__(self):
         return f"Session {self.session_id} - {self.created_by.username} - {self.project.name}"
