@@ -7,6 +7,8 @@ No workflow building logic - just simple chat capabilities with message persiste
 
 import os
 import json
+import asyncio
+import traceback
 from typing import List, Dict, Any
 from datetime import datetime, timezone
 
@@ -34,6 +36,7 @@ from pydantic_ai.providers.google import GoogleProvider
 # Import structured response models
 from models import (
     ConversationalResponse, NodeAddAction, EdgeAddAction, NodeRemoveAction, EdgeRemoveAction,
+    AgentNodeUpdateAction, DatabaseNodeUpdateAction, ToolboxNodeUpdateAction,
     NodeConfig, NodePosition, CredentialInfo, AgentInfo, AgentDetailInfo, SchemaInspectionResult, DatabaseQueryResult
 )
 
@@ -73,7 +76,7 @@ You have access to TOOLS that let you query Django API for available resources:
 - inspect_database_schema(credential_id) - Get database schema info
 - query_database(credential_id, query) - Test SQL queries (auto-limited to 1 row)
 
-You can handle THREE types of interactions:
+You can handle FOUR types of interactions:
 
 1. **CONVERSATIONAL**: When user is chatting, asking questions, greeting, or seeking help
    - Return ConversationalResponse with a friendly message
@@ -85,7 +88,8 @@ You can handle THREE types of interactions:
    - "what databases can I use?" → Call get_credentials(search="", category="RDBMS") → Return list
    - "tell me about the customer database" → Call get_credentials() → Find match → Maybe call inspect_database_schema()
 
-2. **NODE ADD REQUEST**: When user explicitly asks to add a workflow node
+2. **NODE ADD REQUEST**: When user explicitly asks to ADD/CREATE a NEW workflow node
+   - Keywords: "add", "create", "need", "I want"
    - Detect the node type they want
    - Use tools to find appropriate resources (credentials, agents, etc.)
    - Generate appropriate configuration with pre-filled IDs
@@ -95,33 +99,247 @@ You can handle THREE types of interactions:
    - "add a database node" → Call get_credentials() → Use first credential_id in config
    - "add agent node" → Call get_agents() → Use first agent_id in config
 
-3. **WORKFLOW ACTIONS**: Node/edge manipulation (add, remove, connect)
+3. **NODE UPDATE REQUEST**: When user wants to CONFIGURE/UPDATE an EXISTING node
+   - Keywords: "configure", "update", "set", "change"
+   - Check workflow state for existing node type
+   - Use tools to find resource IDs
+   - Parse JSON from tools to extract numeric IDs
+   - Return TYPE-SPECIFIC update action based on node type:
+     * Agent nodes → AgentNodeUpdateAction
+     * Database nodes → DatabaseNodeUpdateAction
+     * Toolbox nodes → ToolboxNodeUpdateAction
+
+   Examples:
+   - "configure agent node with data analyst agent" → AgentNodeUpdateAction
+   - "update the agent with gemini credential" → AgentNodeUpdateAction
+   - "set database credential to postgres" → DatabaseNodeUpdateAction
+
+4. **WORKFLOW ACTIONS**: Node/edge manipulation (add, remove, connect, disconnect)
    - Covered in detail below
 
 TOOL USAGE GUIDELINES:
 - ALWAYS call get_credentials(search="") and get_agents(search="") with EMPTY search=""
-- This returns ALL available resources, letting you intelligently choose the best match
+- This returns ALL available resources for finding exact matches
 - When user asks "what agents?" → Call get_agents() → Return friendly list in ConversationalResponse
 - When user asks about SPECIFIC agent abilities/capabilities → Call get_agent_details(agent_id) → Return detailed info
-- When adding nodes, call tools proactively to pre-fill configs with real IDs
 - Use inspect_database_schema() to get actual table/column names for SQL queries
 - Use query_database() sparingly - only to validate or understand data patterns
 
+EXPLICIT AGENT NODE CONFIGURATION:
+
+When user says "add agent node" with specifications, parse the command for:
+- Agent name (e.g., "using data analyst agent", "with text classifier")
+- Credential name (e.g., "with gemini credential", "using openai")
+- Model name (e.g., "model gemini-2.0-flash")
+
+PARSING KEYWORDS:
+- "using [name]" or "with [name]" → Agent or credential name
+- "model [name]" → Specific model to use
+- If not mentioned → Leave as null
+
+CONFIGURATION STEPS:
+
+1. IF agent name mentioned in command:
+   - Call get_agents(search="")
+   - Find agent where name contains mentioned keywords (case-insensitive substring match)
+   - If found: Extract agent_id and agent_name
+   - If no match: Set agent_id=null, include warning in message
+
+2. IF credential name mentioned in command:
+   - Call get_credentials(search="", category="LLM")
+   - Find credential where name contains mentioned keywords (case-insensitive substring match)
+   - If found: Extract llm_credential_id and credential_name
+   - If no match: Set llm_credential_id=null, include warning in message
+
+3. SET model field:
+   - If user specified "model X" → Use X
+   - If credential contains "gemini" → Default to "gemini-2.0-flash"
+   - Otherwise → null (will use credential's default)
+
+4. ALWAYS SET these defaults:
+   - batch_size: 100
+   - timeout: 30
+
+5. NEVER auto-create input_mapping:
+   - Always leave input_mapping empty or omit it
+   - User will configure this manually in the UI
+
+6. FORMAT message with what was configured:
+   - Start with "✅ Added agent node"
+   - If agent set: "with [Agent Name] (ID: X)"
+   - If credential set: "and [Credential Name] (ID: Y)"
+   - If model set: "using model [model]"
+   - Add warnings for missing required fields: "⚠️ Agent not configured" or "⚠️ LLM credential not configured"
+
+EXAMPLES (Complete NodeAddAction Structures):
+
+Example 1: "add agent node"
+Action: Create node with all null values (except defaults)
+Output: NodeAddAction(
+    node_id="agent-1",
+    node=NodeConfig(
+        node_type="agent",
+        position=NodePosition(x=100, y=200),
+        config={"agent_id": None, "llm_credential_id": None, "batch_size": 100, "timeout": 30},
+        label="AI Agent"
+    ),
+    message="✅ Added agent node. Configure agent and LLM credential in node settings."
+)
+
+Example 2: "add agent node using data analyst agent"
+Action: Call get_agents() → Find "Data analyst agent" (ID: 9)
+Output: NodeAddAction(
+    node_id="agent-1",
+    node=NodeConfig(
+        node_type="agent",
+        position=NodePosition(x=100, y=200),
+        config={"agent_id": 9, "llm_credential_id": None, "batch_size": 100, "timeout": 30},
+        label="AI Agent"
+    ),
+    message="✅ Added agent node with Data analyst agent (ID: 9). ⚠️ LLM credential not configured - configure in node settings."
+)
+
+Example 3: "add agent node with gemini credential"
+Action: Call get_credentials(category="LLM") → Find credential with "gemini" (ID: 3)
+Output: NodeAddAction(
+    node_id="agent-1",
+    node=NodeConfig(
+        node_type="agent",
+        position=NodePosition(x=100, y=200),
+        config={"agent_id": None, "llm_credential_id": 3, "model": "gemini-2.0-flash", "batch_size": 100, "timeout": 30},
+        label="AI Agent"
+    ),
+    message="✅ Added agent node with Gemini credential (ID: 3), model: gemini-2.0-flash. ⚠️ Agent not configured - configure in node settings."
+)
+
+Example 4: "add agent node using text classifier with openai credential"
+Action: Call get_agents() → Find "Text Classifier" (ID: 6), Call get_credentials() → Find "openai" (ID: 5)
+Output: NodeAddAction(
+    node_id="agent-1",
+    node=NodeConfig(
+        node_type="agent",
+        position=NodePosition(x=100, y=200),
+        config={"agent_id": 6, "llm_credential_id": 5, "batch_size": 100, "timeout": 30},
+        label="AI Agent"
+    ),
+    message="✅ Added agent node with Text Classifier (ID: 6) and OpenAI credential (ID: 5)."
+)
+
+Example 5: "add agent node using sentiment analyzer with gemini credential model gemini-2.0-flash"
+Action: Call get_agents() → Find "Call Transcript Sentiment Analyzer" (ID: 3), Call get_credentials() → Find "gemini" (ID: 3)
+Output: NodeAddAction(
+    node_id="agent-1",
+    node=NodeConfig(
+        node_type="agent",
+        position=NodePosition(x=100, y=200),
+        config={"agent_id": 3, "llm_credential_id": 3, "model": "gemini-2.0-flash", "batch_size": 100, "timeout": 30},
+        label="AI Agent"
+    ),
+    message="✅ Added agent node with Call Transcript Sentiment Analyzer (ID: 3), Gemini credential (ID: 3), model: gemini-2.0-flash."
+)
+
+CRITICAL RULES:
+- ONLY set values explicitly mentioned by user
+- Use tools to FIND IDs via name matching, never guess IDs
+- NEVER auto-select if user didn't specify
+- NEVER create input_mapping automatically
+- If name matching fails, set to null and warn user in message
+- Always provide clear feedback about what was configured vs what needs manual setup
+
+NODE UPDATE/CONFIGURATION:
+
+When user says "configure", "update", or "set" for an EXISTING node:
+1. Check workflow state to find the existing node by type
+2. Use tools to find resource IDs if names are mentioned
+3. Parse JSON from tool results to extract numeric IDs
+4. Return TYPE-SPECIFIC update action based on node type
+
+IMPORTANT: Tools return JSON arrays. Parse them to extract IDs!
+- get_agents() returns: [{"id": 9, "name": "Data analyst agent", ...}]
+- get_credentials() returns: [{"id": 3, "name": "Gemini", ...}]
+- Extract the "id" field from matching JSON object and use in the action
+
+AGENT NODE UPDATE EXAMPLES:
+
+Example 1: "configure agent node with data analyst agent"
+Workflow state: node "agent-1" (type: agent) exists
+Steps:
+  1. Call get_agents()
+  2. Tool returns JSON: [{"id": 9, "name": "Data analyst agent", ...}, ...]
+  3. Find object where name contains "data analyst" → Extract id: 9
+  4. Return AgentNodeUpdateAction with agent_id field
+Output: AgentNodeUpdateAction(
+    node_id="agent-1",
+    agent_id=9,
+    llm_credential_id=None,
+    model=None,
+    message="✅ Configured agent-1 with Data analyst agent (ID: 9)"
+)
+
+Example 2: "update agent with gemini credential"
+Workflow state: node "agent-1" (type: agent) exists
+Steps:
+  1. Call get_credentials(category="LLM")
+  2. Tool returns JSON: [{"id": 3, "name": "Gemini", ...}, ...]
+  3. Find object where name contains "gemini" → Extract id: 3
+  4. Set model to "gemini-2.0-flash" (default for gemini)
+Output: AgentNodeUpdateAction(
+    node_id="agent-1",
+    agent_id=None,
+    llm_credential_id=3,
+    model="gemini-2.0-flash",
+    message="✅ Updated agent-1 with Gemini credential (ID: 3), model: gemini-2.0-flash"
+)
+
+Example 3: "set agent model to gemini-2.0-flash"
+Workflow state: node "agent-1" (type: agent) exists
+Output: AgentNodeUpdateAction(
+    node_id="agent-1",
+    agent_id=None,
+    llm_credential_id=None,
+    model="gemini-2.0-flash",
+    message="✅ Set agent-1 model to gemini-2.0-flash"
+)
+
+DATABASE NODE UPDATE EXAMPLE:
+
+Example 4: "configure database node with postgres credential"
+Workflow state: node "database-1" (type: database) exists
+Steps:
+  1. Call get_credentials(category="RDBMS")
+  2. Tool returns JSON: [{"id": 2, "name": "PostgreSQL prod", ...}, ...]
+  3. Find object where name contains "postgres" → Extract id: 2
+Output: DatabaseNodeUpdateAction(
+    node_id="database-1",
+    credential_id=2,
+    query=None,
+    message="✅ Configured database-1 with PostgreSQL credential (ID: 2)"
+)
+
+CRITICAL NODE UPDATE RULES:
+- Use EXISTING node_id from workflow state (e.g., "agent-1", "database-1")
+- Use TYPE-SPECIFIC action: AgentNodeUpdateAction for agents, DatabaseNodeUpdateAction for databases
+- Set fields explicitly (agent_id=9) not in a dict
+- "configure/update" = Type-specific update action for existing nodes
+- "add/create" = NodeAddAction for new nodes
+- Always check workflow state first to verify node exists
+
 DETAILED AGENT QUERIES:
 When user asks about a specific agent's abilities, capabilities, or what it does:
-1. Find the agent_id from previous conversation (e.g., from get_agents() results)
-2. Call get_agent_details(agent_id) to fetch complete information
-3. Return ConversationalResponse with formatted details about prompts, tools, and capabilities
+1. Call get_agents() if needed to find the agent
+2. Parse JSON to extract agent_id
+3. Call get_agent_details(agent_id) to fetch complete information
+4. Return ConversationalResponse with formatted details about prompts, tools, and capabilities
 
 Examples:
   User: "what agents are available?"
-  You: [Call get_agents()] → Return list in ConversationalResponse
+  You: [Call get_agents()] → Parse JSON → Format as friendly list in ConversationalResponse
 
-  User: "what are the abilities of data analyst agent?" or "tell me about agent ID 9"
-  You: [Extract agent_id=9] → [Call get_agent_details(9)] → Return detailed capabilities in ConversationalResponse
+  User: "what are the abilities of data analyst agent?"
+  You: [Call get_agents()] → Parse JSON, find {"id": 9, "name": "Data analyst agent"} → [Call get_agent_details(9)] → Return detailed capabilities in ConversationalResponse
 
   User: "what does the text classifier do?"
-  You: [Find agent_id from previous context] → [Call get_agent_details(id)] → Return detailed info
+  You: [Call get_agents()] → Parse JSON to find id → [Call get_agent_details(id)] → Return detailed info
 
 AVAILABLE NODE TYPES:
 - trigger_manual: Manual workflow trigger (button/API)
@@ -366,14 +584,14 @@ REMEMBER:
 chat_agent = Agent(
     model,
     deps_type=str,  # session_id passed as dependency for tools
-    output_type=ConversationalResponse | NodeAddAction | EdgeAddAction | NodeRemoveAction | EdgeRemoveAction,
+    output_type=ConversationalResponse | NodeAddAction | AgentNodeUpdateAction | DatabaseNodeUpdateAction | ToolboxNodeUpdateAction | EdgeAddAction | NodeRemoveAction | EdgeRemoveAction,
     instructions=AGENT_PROMPT,
 )
 
 print(f"\n{'*'*80}")
 print(f"🤖 WORKFLOW BUILDER AGENT INITIALIZED")
 print(f"   Model: {MODEL_NAME}")
-print(f"   Output: ConversationalResponse | NodeAddAction | EdgeAddAction | NodeRemoveAction | EdgeRemoveAction")
+print(f"   Output: ConversationalResponse | NodeAddAction | AgentNodeUpdateAction | DatabaseNodeUpdateAction | ToolboxNodeUpdateAction | EdgeAddAction | NodeRemoveAction | EdgeRemoveAction")
 print(f"   Mode: Intent-based routing (conversation + node/edge add/remove)")
 print(f"   Tools: get_credentials, get_agents, get_agent_details, inspect_database_schema, query_database")
 print(f"{'*'*80}\n")
@@ -390,10 +608,11 @@ async def get_credentials(ctx: RunContext[str], search: str = "", category: str 
 
     Args:
         search: Optional search term (usually empty to get all)
-        category: Credential category (default: RDBMS)
+        category: Credential category (default: RDBMS, use "LLM" for AI credentials)
 
     Returns:
-        Formatted string with credentials list
+        JSON array string: [{"id": int, "name": str, "credential_type_name": str, "description": str}, ...]
+        Parse this JSON to extract credential IDs for use in config_updates.
     """
     session_id = ctx.deps
 
@@ -414,28 +633,35 @@ async def get_credentials(ctx: RunContext[str], search: str = "", category: str 
             credentials = [CredentialInfo(**item) for item in data]
 
             if credentials:
-                cred_list = "\n".join(
-                    f"  • {c.name} (ID: {c.id}) - {c.credential_type_name}" +
-                    (f" - {c.description}" if c.description else "")
+                # Return JSON array of credential objects with context
+                creds_data = [
+                    {
+                        "id": c.id,
+                        "name": c.name,
+                        "credential_type_name": c.credential_type_name,
+                        "description": c.description or ""
+                    }
                     for c in credentials
-                )
-                result = f"Found {len(credentials)} credential(s):\n{cred_list}"
-            else:
-                result = "No credentials found."
+                ]
 
-            print(f"✅ get_credentials SUCCESS: {len(credentials)} credentials found")
-            return result
+                result = f"Found {len(credentials)} credentials:\n{json.dumps(creds_data, indent=2)}"
+
+                print(f"✅ get_credentials SUCCESS: {len(credentials)} credentials found")
+                return result
+            else:
+                print(f"✅ get_credentials SUCCESS: 0 credentials found")
+                return "No credentials found: []"
 
     except httpx.HTTPStatusError as e:
         error_msg = f"HTTP {e.response.status_code}: {e.response.text}"
         print(f"❌ get_credentials ERROR: {error_msg}")
         if e.response.status_code >= 500:
             raise ModelRetry(f"Server error fetching credentials: {e.response.status_code}")
-        return f"Error fetching credentials: {error_msg}"
+        return json.dumps({"error": error_msg})
     except Exception as e:
         error_msg = str(e)
         print(f"❌ get_credentials EXCEPTION: {error_msg}")
-        return f"Tool execution failed: {error_msg}"
+        return json.dumps({"error": error_msg})
 
 
 @chat_agent.tool
@@ -447,7 +673,8 @@ async def get_agents(ctx: RunContext[str], search: str = "") -> str:
         search: Optional search term (usually empty to get all)
 
     Returns:
-        Formatted string with agents list
+        JSON array string: [{"id": int, "name": str, "description": str, "return_type": str}, ...]
+        Parse this JSON to extract agent IDs for use in config_updates.
     """
     session_id = ctx.deps
 
@@ -468,29 +695,35 @@ async def get_agents(ctx: RunContext[str], search: str = "") -> str:
             agents = [AgentInfo(**item) for item in data]
 
             if agents:
-                agent_list = "\n".join(
-                    f"  • {a.name} (ID: {a.id})" +
-                    (f" - {a.description}" if a.description else "") +
-                    (f" [Return type: {a.return_type}]" if a.return_type else "")
+                # Return JSON array of agent objects with context
+                agents_data = [
+                    {
+                        "id": a.id,
+                        "name": a.name,
+                        "description": a.description or "",
+                        "return_type": a.return_type or ""
+                    }
                     for a in agents
-                )
-                result = f"Found {len(agents)} agent(s):\n{agent_list}"
-            else:
-                result = "No agents found."
+                ]
 
-            print(f"✅ get_agents SUCCESS: {len(agents)} agents found")
-            return result
+                result = f"Found {len(agents)} agents:\n{json.dumps(agents_data, indent=2)}"
+
+                print(f"✅ get_agents SUCCESS: {len(agents)} agents found")
+                return result
+            else:
+                print(f"✅ get_agents SUCCESS: 0 agents found")
+                return "No agents found: []"
 
     except httpx.HTTPStatusError as e:
         error_msg = f"HTTP {e.response.status_code}: {e.response.text}"
         print(f"❌ get_agents ERROR: {error_msg}")
         if e.response.status_code >= 500:
             raise ModelRetry(f"Server error fetching agents: {e.response.status_code}")
-        return f"Error fetching agents: {error_msg}"
+        return json.dumps({"error": error_msg})
     except Exception as e:
         error_msg = str(e)
         print(f"❌ get_agents EXCEPTION: {error_msg}")
-        return f"Tool execution failed: {error_msg}"
+        return json.dumps({"error": error_msg})
 
 
 @chat_agent.tool
@@ -911,113 +1144,247 @@ async def generate_chat(body: GenerateRequest) -> StreamingResponse:
     augmented_prompt = f"{workflow_context}\nUSER REQUEST: {prompt}"
 
     async def stream():
-        # Echo user message
-        yield json.dumps({
-            "role": "user",
-            "timestamp": now_iso(),
-            "content": prompt
-        }).encode("utf-8") + b"\n"
+        try:
+            # Echo user message
+            yield json.dumps({
+                "role": "user",
+                "timestamp": now_iso(),
+                "content": prompt
+            }).encode("utf-8") + b"\n"
 
-        # Load message history
-        messages = await load_messages(session_id)
-        print(f"   Loaded {len(messages)} messages from history")
+            # Load message history
+            messages = await load_messages(session_id)
+            print(f"   Loaded {len(messages)} messages from history")
 
-        # Run chat agent with structured output (using augmented prompt with workflow context)
-        # Pass session_id as deps for tool access
-        result = await chat_agent.run(augmented_prompt, message_history=messages, deps=session_id)
-        output = result.output
+            # Run chat agent with structured output (using augmented prompt with workflow context)
+            # Pass session_id as deps for tool access
+            print(f"   🤖 Calling chat_agent.run()...")
 
-        # Determine output type and stream appropriate response
-        if isinstance(output, NodeAddAction):
-            # Node add action
-            print(f"   🎯 Intent: NODE_ADD ({output.node.node_type})")
+            try:
+                # Add 60 second timeout
+                result = await asyncio.wait_for(
+                    chat_agent.run(augmented_prompt, message_history=messages, deps=session_id),
+                    timeout=60.0
+                )
+                output = result.output
+                print(f"   ✅ Agent completed successfully, output type: {type(output).__name__}")
 
+            except asyncio.TimeoutError:
+                error_msg = "Agent execution timed out after 60 seconds"
+                print(f"   ❌ TIMEOUT: {error_msg}")
+                yield json.dumps({
+                    "role": "assistant",
+                    "timestamp": now_iso(),
+                    "content": f"⚠️ Error: {error_msg}. The agent took too long to respond."
+                }).encode("utf-8") + b"\n"
+                return
+
+            except Exception as agent_error:
+                error_msg = f"Agent execution failed: {str(agent_error)}"
+                print(f"   ❌ AGENT ERROR: {error_msg}")
+                print(f"   Traceback:")
+                traceback.print_exc()
+                yield json.dumps({
+                    "role": "assistant",
+                    "timestamp": now_iso(),
+                    "content": f"⚠️ Error: {error_msg}"
+                }).encode("utf-8") + b"\n"
+                return
+
+            # Determine output type and stream appropriate response
+            print(f"   📊 Processing output type...")
+            if isinstance(output, NodeAddAction):
+                # Node add action
+                print(f"   🎯 Intent: NODE_ADD ({output.node.node_type})")
+
+                yield json.dumps({
+                    "role": "assistant",
+                    "timestamp": now_iso(),
+                    "content": output.message,
+                    "action": "node_add",
+                    "data": {
+                        "node_id": output.node_id,
+                        "type": output.node.node_type,
+                        "position": {
+                            "x": output.node.position.x,
+                            "y": output.node.position.y
+                        },
+                        "config": output.node.config,
+                        "label": output.node.label
+                    }
+                }).encode("utf-8") + b"\n"
+
+            elif isinstance(output, EdgeAddAction):
+                # Edge add action
+                print(f"   🔗 Intent: EDGE_ADD ({output.source_node_id} → {output.target_node_id})")
+                print(f"      Handles: source={output.source_handle}, target={output.target_handle}")
+
+                yield json.dumps({
+                    "role": "assistant",
+                    "timestamp": now_iso(),
+                    "content": output.message,
+                    "action": "edge_add",
+                    "data": {
+                        "source_node_id": output.source_node_id,
+                        "target_node_id": output.target_node_id,
+                        "source_handle": output.source_handle,
+                        "target_handle": output.target_handle
+                    }
+                }).encode("utf-8") + b"\n"
+
+            elif isinstance(output, AgentNodeUpdateAction):
+                # Agent node update action
+                print(f"   ✏️ Intent: AGENT_NODE_UPDATE ({output.node_id})")
+                # Build config_updates from non-None fields
+                config_updates = {}
+                if output.agent_id is not None:
+                    config_updates["agent_id"] = output.agent_id
+                if output.llm_credential_id is not None:
+                    config_updates["llm_credential_id"] = output.llm_credential_id
+                if output.model is not None:
+                    config_updates["model"] = output.model
+                print(f"      Config updates: {config_updates}")
+
+                yield json.dumps({
+                    "role": "assistant",
+                    "timestamp": now_iso(),
+                    "content": output.message,
+                    "action": "node_update",
+                    "data": {
+                        "node_id": output.node_id,
+                        "config_updates": config_updates
+                    }
+                }).encode("utf-8") + b"\n"
+
+            elif isinstance(output, DatabaseNodeUpdateAction):
+                # Database node update action
+                print(f"   ✏️ Intent: DATABASE_NODE_UPDATE ({output.node_id})")
+                # Build config_updates from non-None fields
+                config_updates = {}
+                if output.credential_id is not None:
+                    config_updates["credential_id"] = output.credential_id
+                if output.query is not None:
+                    config_updates["query"] = output.query
+                print(f"      Config updates: {config_updates}")
+
+                yield json.dumps({
+                    "role": "assistant",
+                    "timestamp": now_iso(),
+                    "content": output.message,
+                    "action": "node_update",
+                    "data": {
+                        "node_id": output.node_id,
+                        "config_updates": config_updates
+                    }
+                }).encode("utf-8") + b"\n"
+
+            elif isinstance(output, ToolboxNodeUpdateAction):
+                # Toolbox node update action
+                print(f"   ✏️ Intent: TOOLBOX_NODE_UPDATE ({output.node_id})")
+                # Build config_updates from non-None fields
+                config_updates = {}
+                if output.tool_ids is not None:
+                    config_updates["tool_ids"] = output.tool_ids
+                print(f"      Config updates: {config_updates}")
+
+                yield json.dumps({
+                    "role": "assistant",
+                    "timestamp": now_iso(),
+                    "content": output.message,
+                    "action": "node_update",
+                    "data": {
+                        "node_id": output.node_id,
+                        "config_updates": config_updates
+                    }
+                }).encode("utf-8") + b"\n"
+
+            elif isinstance(output, NodeRemoveAction):
+                # Node remove action
+                print(f"   🗑️ Intent: NODE_REMOVE ({output.node_id})")
+
+                yield json.dumps({
+                    "role": "assistant",
+                    "timestamp": now_iso(),
+                    "content": output.message,
+                    "action": "node_remove",
+                    "data": {
+                        "node_id": output.node_id
+                    }
+                }).encode("utf-8") + b"\n"
+
+            elif isinstance(output, EdgeRemoveAction):
+                # Edge remove action
+                print(f"   ✂️ Intent: EDGE_REMOVE ({output.source_node_id} → {output.target_node_id})")
+
+                # Find the actual edge in current workflow state
+                edge_id = None
+                if current_workflow and current_workflow.get("edges"):
+                    edges = current_workflow["edges"]
+                    for edge in edges:
+                        # Match by source, target, and handles
+                        source_match = edge.get("source") == output.source_node_id
+                        target_match = edge.get("target") == output.target_node_id
+                        source_handle_match = edge.get("sourceHandle") == output.source_handle
+                        target_handle_match = edge.get("targetHandle") == output.target_handle
+
+                        if source_match and target_match and source_handle_match and target_handle_match:
+                            edge_id = edge.get("id")
+                            print(f"      Found edge to remove: {edge_id}")
+                            break
+
+                if edge_id:
+                    yield json.dumps({
+                        "role": "assistant",
+                        "timestamp": now_iso(),
+                        "content": output.message,
+                        "action": "edge_remove",
+                        "data": {
+                            "edge_id": edge_id
+                        }
+                    }).encode("utf-8") + b"\n"
+                else:
+                    # Edge not found - send error message
+                    error_msg = f"⚠️ Could not find edge between {output.source_node_id} and {output.target_node_id}"
+                    print(f"      WARNING: {error_msg}")
+                    yield json.dumps({
+                        "role": "assistant",
+                        "timestamp": now_iso(),
+                        "content": error_msg
+                    }).encode("utf-8") + b"\n"
+
+            elif isinstance(output, ConversationalResponse):
+                # Conversational response
+                print(f"   💬 Intent: CONVERSATIONAL")
+
+                yield json.dumps({
+                    "role": "assistant",
+                    "timestamp": now_iso(),
+                    "content": output.message
+                }).encode("utf-8") + b"\n"
+
+            # Persist new messages
+            await add_messages_blob(session_id, result.new_messages_json())
+            print(f"   ✅ Response sent and persisted")
+
+            # Track usage
+            usage = result.usage()
+            await update_session_usage(
+                session_id,
+                requests=usage.requests,
+                request_tokens=usage.request_tokens,
+                response_tokens=usage.response_tokens,
+                total_tokens=usage.total_tokens
+            )
+
+        except Exception as stream_error:
+            error_msg = f"Streaming error: {str(stream_error)}"
+            print(f"   ❌ STREAM ERROR: {error_msg}")
+            traceback.print_exc()
             yield json.dumps({
                 "role": "assistant",
                 "timestamp": now_iso(),
-                "content": output.message,
-                "action": "node_add",
-                "data": {
-                    "node_id": output.node_id,
-                    "type": output.node.node_type,
-                    "position": {
-                        "x": output.node.position.x,
-                        "y": output.node.position.y
-                    },
-                    "config": output.node.config,
-                    "label": output.node.label
-                }
+                "content": f"⚠️ Unexpected error: {error_msg}"
             }).encode("utf-8") + b"\n"
-
-        elif isinstance(output, EdgeAddAction):
-            # Edge add action
-            print(f"   🔗 Intent: EDGE_ADD ({output.source_node_id} → {output.target_node_id})")
-            print(f"      Handles: source={output.source_handle}, target={output.target_handle}")
-
-            yield json.dumps({
-                "role": "assistant",
-                "timestamp": now_iso(),
-                "content": output.message,
-                "action": "edge_add",
-                "data": {
-                    "source_node_id": output.source_node_id,
-                    "target_node_id": output.target_node_id,
-                    "source_handle": output.source_handle,
-                    "target_handle": output.target_handle
-                }
-            }).encode("utf-8") + b"\n"
-
-        elif isinstance(output, NodeRemoveAction):
-            # Node remove action
-            print(f"   🗑️ Intent: NODE_REMOVE ({output.node_id})")
-
-            yield json.dumps({
-                "role": "assistant",
-                "timestamp": now_iso(),
-                "content": output.message,
-                "action": "node_remove",
-                "data": {
-                    "node_id": output.node_id
-                }
-            }).encode("utf-8") + b"\n"
-
-        elif isinstance(output, EdgeRemoveAction):
-            # Edge remove action
-            print(f"   ✂️ Intent: EDGE_REMOVE ({output.edge_id})")
-
-            yield json.dumps({
-                "role": "assistant",
-                "timestamp": now_iso(),
-                "content": output.message,
-                "action": "edge_remove",
-                "data": {
-                    "edge_id": output.edge_id
-                }
-            }).encode("utf-8") + b"\n"
-
-        elif isinstance(output, ConversationalResponse):
-            # Conversational response
-            print(f"   💬 Intent: CONVERSATIONAL")
-
-            yield json.dumps({
-                "role": "assistant",
-                "timestamp": now_iso(),
-                "content": output.message
-            }).encode("utf-8") + b"\n"
-
-        # Persist new messages
-        await add_messages_blob(session_id, result.new_messages_json())
-        print(f"   ✅ Response sent and persisted")
-
-        # Track usage
-        usage = result.usage()
-        await update_session_usage(
-            session_id,
-            requests=usage.requests,
-            request_tokens=usage.request_tokens,
-            response_tokens=usage.response_tokens,
-            total_tokens=usage.total_tokens
-        )
 
     return StreamingResponse(stream(), media_type="text/plain")
 

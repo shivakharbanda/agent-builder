@@ -212,6 +212,7 @@ export default function CreateWorkflow() {
           break;
 
         case 'node_edit':
+        case 'node_update':
           const editData = structuredResponse.data;
           canvasRef.current.updateNode(editData.node_id, {
             config: editData.config_updates,

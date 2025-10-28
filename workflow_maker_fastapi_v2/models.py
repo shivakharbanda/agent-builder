@@ -133,6 +133,90 @@ class EdgeRemoveAction(BaseModel):
     )
 
 
+class AgentNodeUpdateAction(BaseModel):
+    """
+    Action to update/configure an existing AGENT node.
+
+    Used when user requests to modify agent node configuration
+    (e.g., "configure agent node with data analyst agent").
+    """
+    node_id: str = Field(
+        description="Existing agent node identifier to update (use exact ID from workflow state)"
+    )
+    agent_id: int | None = Field(
+        default=None,
+        description="Agent ID to set (numeric ID from get_agents tool)"
+    )
+    llm_credential_id: int | None = Field(
+        default=None,
+        description="LLM credential ID to set (numeric ID from get_credentials tool with category='LLM')"
+    )
+    model: str | None = Field(
+        default=None,
+        description="Model name to set (e.g., 'gemini-2.0-flash', 'gpt-4')"
+    )
+    message: str = Field(
+        description="Confirmation message to display to user"
+    )
+
+    def model_post_init(self, __context) -> None:
+        """Validate at least one field is set"""
+        if self.agent_id is None and self.llm_credential_id is None and self.model is None:
+            raise ValueError("At least one of agent_id, llm_credential_id, or model must be set")
+
+
+class DatabaseNodeUpdateAction(BaseModel):
+    """
+    Action to update/configure an existing DATABASE node.
+
+    Used when user requests to modify database node configuration
+    (e.g., "configure database with postgres credential").
+    """
+    node_id: str = Field(
+        description="Existing database node identifier to update (use exact ID from workflow state)"
+    )
+    credential_id: int | None = Field(
+        default=None,
+        description="Database credential ID to set (numeric ID from get_credentials tool with category='RDBMS')"
+    )
+    query: str | None = Field(
+        default=None,
+        description="SQL query to set"
+    )
+    message: str = Field(
+        description="Confirmation message to display to user"
+    )
+
+    def model_post_init(self, __context) -> None:
+        """Validate at least one field is set"""
+        if self.credential_id is None and self.query is None:
+            raise ValueError("At least one of credential_id or query must be set")
+
+
+class ToolboxNodeUpdateAction(BaseModel):
+    """
+    Action to update/configure an existing TOOLBOX node.
+
+    Used when user requests to modify toolbox node configuration
+    (e.g., "add tools to toolbox").
+    """
+    node_id: str = Field(
+        description="Existing toolbox node identifier to update (use exact ID from workflow state)"
+    )
+    tool_ids: list[int] | None = Field(
+        default=None,
+        description="List of tool IDs to set in the toolbox"
+    )
+    message: str = Field(
+        description="Confirmation message to display to user"
+    )
+
+    def model_post_init(self, __context) -> None:
+        """Validate tool_ids is set"""
+        if self.tool_ids is None:
+            raise ValueError("tool_ids must be set for toolbox updates")
+
+
 # ============================================================================
 # Tool Result Models (for Django API tools)
 # ============================================================================

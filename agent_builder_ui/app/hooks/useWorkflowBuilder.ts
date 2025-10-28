@@ -211,6 +211,69 @@ export const useWorkflowBuilder = (options?: UseWorkflowBuilderOptions) => {
                 }
               }
 
+              // Check if this is a node_update action
+              if (data.action === 'node_update' && data.data) {
+                console.log('✏️ NODE UPDATE ACTION:', data.data);
+
+                // Extract update data
+                const updateData = data.data;
+
+                // Update workflow config - merge config_updates into existing node
+                setSession(prev => {
+                  const currentNodes = prev.finalConfig?.nodes || [];
+                  const currentEdges = prev.finalConfig?.edges || [];
+
+                  // Find the node to update
+                  const updatedNodes = currentNodes.map(node => {
+                    if (node.id === updateData.node_id) {
+                      // Clean up old camelCase fields before merging
+                      const cleanedConfig = { ...node.config };
+
+                      // Remove deprecated camelCase fields that have snake_case equivalents
+                      if ('agentId' in cleanedConfig && 'agent_id' in updateData.config_updates) {
+                        delete cleanedConfig.agentId;
+                      }
+                      if ('llmCredentialId' in cleanedConfig && 'llm_credential_id' in updateData.config_updates) {
+                        delete cleanedConfig.llmCredentialId;
+                      }
+                      // Remove unused fields that shouldn't be in config
+                      delete cleanedConfig.prompts;
+                      delete cleanedConfig.tools;
+
+                      // Merge config_updates into cleaned config
+                      return {
+                        ...node,
+                        config: {
+                          ...cleanedConfig,
+                          ...updateData.config_updates
+                        }
+                      };
+                    }
+                    return node;
+                  });
+
+                  return {
+                    ...prev,
+                    finalConfig: {
+                      nodes: updatedNodes,
+                      edges: currentEdges,
+                      metadata: prev.finalConfig?.metadata || {}
+                    }
+                  };
+                });
+
+                // Callback for imperative canvas updates
+                if (onAIAction) {
+                  onAIAction({
+                    action_type: 'node_update',
+                    data: {
+                      node_id: updateData.node_id,
+                      config_updates: updateData.config_updates
+                    }
+                  });
+                }
+              }
+
               // Check if this is a node_remove action
               if (data.action === 'node_remove' && data.data) {
                 console.log('🗑️ NODE REMOVE ACTION:', data.data);

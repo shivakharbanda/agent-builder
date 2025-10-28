@@ -194,10 +194,9 @@ export const WorkflowCanvas = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>
         };
       case 'agent':
         return {
-          agentId: null,
+          agent_id: null,
           llm_credential_id: null,
-          prompts: [],
-          tools: []
+          model: null
         };
       case 'output':
         return {
