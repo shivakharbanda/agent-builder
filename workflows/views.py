@@ -1118,6 +1118,66 @@ class WorkflowBuilderToolsViewSet(viewsets.ViewSet):
         serializer = AgentListSerializer(agents, many=True)
         return Response(serializer.data)
 
+    @action(detail=False, methods=['get'], url_path='get_agent_details')
+    def get_agent_details(self, request):
+        """
+        Tool: Get detailed information about a specific agent.
+
+        Query params:
+            - session_id: Workflow builder session ID (for FastAPI tools)
+            - agent_id: ID of the agent to get details for
+
+        Returns:
+            Detailed agent information including prompts, tools, schema
+        """
+        from workflows.models import WorkflowBuilderSession
+        from agents.serializers import AgentSerializer
+
+        session_id = request.query_params.get('session_id')
+        agent_id = request.query_params.get('agent_id')
+
+        if not session_id:
+            return Response(
+                {'error': 'session_id is required'},
+                status=400
+            )
+
+        if not agent_id:
+            return Response(
+                {'error': 'agent_id is required'},
+                status=400
+            )
+
+        # Validate session
+        try:
+            session = WorkflowBuilderSession.objects.get(
+                session_id=session_id,
+                is_active=True
+            )
+            project_id = session.project_id
+        except WorkflowBuilderSession.DoesNotExist:
+            return Response(
+                {'error': f'Session {session_id} not found or expired'},
+                status=404
+            )
+
+        # Get agent and verify it belongs to the session's project
+        try:
+            agent = Agent.objects.get(
+                id=agent_id,
+                project_id=project_id,
+                is_active=True
+            )
+        except Agent.DoesNotExist:
+            return Response(
+                {'error': f'Agent {agent_id} not found or not accessible'},
+                status=404
+            )
+
+        # Return full agent details using AgentSerializer
+        serializer = AgentSerializer(agent)
+        return Response(serializer.data)
+
     @action(detail=False, methods=['post'])
     def inspect_schema(self, request):
         """

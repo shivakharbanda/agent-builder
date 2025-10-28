@@ -18,7 +18,8 @@ from pydantic import BaseModel
 import aiosqlite
 from dotenv import load_dotenv
 
-from pydantic_ai import Agent
+import httpx
+from pydantic_ai import Agent, RunContext, ModelRetry
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -31,7 +32,10 @@ from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
 
 # Import structured response models
-from models import ConversationalResponse, NodeAddAction, EdgeAddAction, NodeRemoveAction, EdgeRemoveAction, NodeConfig, NodePosition
+from models import (
+    ConversationalResponse, NodeAddAction, EdgeAddAction, NodeRemoveAction, EdgeRemoveAction,
+    NodeConfig, NodePosition, CredentialInfo, AgentInfo, AgentDetailInfo, SchemaInspectionResult, DatabaseQueryResult
+)
 
 
 # Load environment variables
@@ -45,6 +49,7 @@ load_dotenv()
 DB_PATH = os.getenv("DB_PATH", "messages.db")
 MODEL_NAME = os.getenv("MODEL_NAME", "gemini-1.5-flash-latest")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+DJANGO_API_BASE = os.getenv("DJANGO_API_BASE", "http://localhost:8000")
 
 if not GOOGLE_API_KEY:
     raise RuntimeError("GOOGLE_API_KEY not set. Please set your Google API key in the .env file.")
@@ -61,16 +66,62 @@ model = GoogleModel(MODEL_NAME, provider=provider)
 AGENT_PROMPT = """
 You are a workflow builder assistant that helps users create workflows through conversation.
 
-You can handle TWO types of interactions:
+You have access to TOOLS that let you query Django API for available resources:
+- get_credentials(search="", category="RDBMS") - Find database credentials
+- get_agents(search="") - Find AI agents (basic list)
+- get_agent_details(agent_id) - Get detailed agent info (prompts, tools, capabilities)
+- inspect_database_schema(credential_id) - Get database schema info
+- query_database(credential_id, query) - Test SQL queries (auto-limited to 1 row)
+
+You can handle THREE types of interactions:
 
 1. **CONVERSATIONAL**: When user is chatting, asking questions, greeting, or seeking help
    - Return ConversationalResponse with a friendly message
    - Be helpful, concise, and guide them
+   - Use tools to answer questions about available resources
+
+   Examples:
+   - "what agents are available?" → Call get_agents(search="") → Return list in conversational message
+   - "what databases can I use?" → Call get_credentials(search="", category="RDBMS") → Return list
+   - "tell me about the customer database" → Call get_credentials() → Find match → Maybe call inspect_database_schema()
 
 2. **NODE ADD REQUEST**: When user explicitly asks to add a workflow node
    - Detect the node type they want
-   - Generate appropriate configuration
+   - Use tools to find appropriate resources (credentials, agents, etc.)
+   - Generate appropriate configuration with pre-filled IDs
    - Return NodeAddAction with the node details
+
+   Examples:
+   - "add a database node" → Call get_credentials() → Use first credential_id in config
+   - "add agent node" → Call get_agents() → Use first agent_id in config
+
+3. **WORKFLOW ACTIONS**: Node/edge manipulation (add, remove, connect)
+   - Covered in detail below
+
+TOOL USAGE GUIDELINES:
+- ALWAYS call get_credentials(search="") and get_agents(search="") with EMPTY search=""
+- This returns ALL available resources, letting you intelligently choose the best match
+- When user asks "what agents?" → Call get_agents() → Return friendly list in ConversationalResponse
+- When user asks about SPECIFIC agent abilities/capabilities → Call get_agent_details(agent_id) → Return detailed info
+- When adding nodes, call tools proactively to pre-fill configs with real IDs
+- Use inspect_database_schema() to get actual table/column names for SQL queries
+- Use query_database() sparingly - only to validate or understand data patterns
+
+DETAILED AGENT QUERIES:
+When user asks about a specific agent's abilities, capabilities, or what it does:
+1. Find the agent_id from previous conversation (e.g., from get_agents() results)
+2. Call get_agent_details(agent_id) to fetch complete information
+3. Return ConversationalResponse with formatted details about prompts, tools, and capabilities
+
+Examples:
+  User: "what agents are available?"
+  You: [Call get_agents()] → Return list in ConversationalResponse
+
+  User: "what are the abilities of data analyst agent?" or "tell me about agent ID 9"
+  You: [Extract agent_id=9] → [Call get_agent_details(9)] → Return detailed capabilities in ConversationalResponse
+
+  User: "what does the text classifier do?"
+  You: [Find agent_id from previous context] → [Call get_agent_details(id)] → Return detailed info
 
 AVAILABLE NODE TYPES:
 - trigger_manual: Manual workflow trigger (button/API)
@@ -298,7 +349,8 @@ Output: NodeAddAction(
 )
 
 REMEMBER:
-- **Node creation**: if user says "add", "need", "create" + node name = NodeAddAction
+- **Questions about resources**: Use tools (get_credentials, get_agents) then return ConversationalResponse with list
+- **Node creation**: if user says "add", "need", "create" + node name = NodeAddAction (optionally call tools first to pre-fill IDs)
 - **Edge creation**: if user says "connect", "join", "link" + node IDs = EdgeAddAction
 - **Node removal**: if user says "remove", "delete" + node type = NodeRemoveAction
 - **Edge removal**: if user says "disconnect", "remove edge", "delete connection" = EdgeRemoveAction
@@ -307,11 +359,13 @@ REMEMBER:
 - Provide helpful guidance
 - Always check workflow state before operations to verify nodes/edges exist
 - ALWAYS use exact IDs from workflow state, never invent IDs
+- Use tools to provide intelligent, context-aware responses about available resources
 """
 
 # Create agent with structured output
 chat_agent = Agent(
     model,
+    deps_type=str,  # session_id passed as dependency for tools
     output_type=ConversationalResponse | NodeAddAction | EdgeAddAction | NodeRemoveAction | EdgeRemoveAction,
     instructions=AGENT_PROMPT,
 )
@@ -321,7 +375,344 @@ print(f"🤖 WORKFLOW BUILDER AGENT INITIALIZED")
 print(f"   Model: {MODEL_NAME}")
 print(f"   Output: ConversationalResponse | NodeAddAction | EdgeAddAction | NodeRemoveAction | EdgeRemoveAction")
 print(f"   Mode: Intent-based routing (conversation + node/edge add/remove)")
+print(f"   Tools: get_credentials, get_agents, get_agent_details, inspect_database_schema, query_database")
 print(f"{'*'*80}\n")
+
+
+# ============================================================================
+# Agent Tools - Django API Integration
+# ============================================================================
+
+@chat_agent.tool
+async def get_credentials(ctx: RunContext[str], search: str = "", category: str = "RDBMS") -> str:
+    """
+    Get available database credentials for the current user.
+
+    Args:
+        search: Optional search term (usually empty to get all)
+        category: Credential category (default: RDBMS)
+
+    Returns:
+        Formatted string with credentials list
+    """
+    session_id = ctx.deps
+
+    print(f"\n{'='*80}")
+    print(f"🔧 TOOL: get_credentials")
+    print(f"   Session ID: {session_id}")
+    print(f"   Search: '{search}', Category: '{category}'")
+    print(f"{'='*80}\n")
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            url = f"{DJANGO_API_BASE}/api/builder-tools/get_credentials/"
+            params = {"session_id": session_id, "search": search, "category": category}
+
+            response = await client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+            credentials = [CredentialInfo(**item) for item in data]
+
+            if credentials:
+                cred_list = "\n".join(
+                    f"  • {c.name} (ID: {c.id}) - {c.credential_type_name}" +
+                    (f" - {c.description}" if c.description else "")
+                    for c in credentials
+                )
+                result = f"Found {len(credentials)} credential(s):\n{cred_list}"
+            else:
+                result = "No credentials found."
+
+            print(f"✅ get_credentials SUCCESS: {len(credentials)} credentials found")
+            return result
+
+    except httpx.HTTPStatusError as e:
+        error_msg = f"HTTP {e.response.status_code}: {e.response.text}"
+        print(f"❌ get_credentials ERROR: {error_msg}")
+        if e.response.status_code >= 500:
+            raise ModelRetry(f"Server error fetching credentials: {e.response.status_code}")
+        return f"Error fetching credentials: {error_msg}"
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ get_credentials EXCEPTION: {error_msg}")
+        return f"Tool execution failed: {error_msg}"
+
+
+@chat_agent.tool
+async def get_agents(ctx: RunContext[str], search: str = "") -> str:
+    """
+    Get available AI agents for the current project.
+
+    Args:
+        search: Optional search term (usually empty to get all)
+
+    Returns:
+        Formatted string with agents list
+    """
+    session_id = ctx.deps
+
+    print(f"\n{'='*80}")
+    print(f"🔧 TOOL: get_agents")
+    print(f"   Session ID: {session_id}")
+    print(f"   Search: '{search}'")
+    print(f"{'='*80}\n")
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            url = f"{DJANGO_API_BASE}/api/builder-tools/get_agents/"
+            params = {"session_id": session_id, "search": search}
+
+            response = await client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+            agents = [AgentInfo(**item) for item in data]
+
+            if agents:
+                agent_list = "\n".join(
+                    f"  • {a.name} (ID: {a.id})" +
+                    (f" - {a.description}" if a.description else "") +
+                    (f" [Return type: {a.return_type}]" if a.return_type else "")
+                    for a in agents
+                )
+                result = f"Found {len(agents)} agent(s):\n{agent_list}"
+            else:
+                result = "No agents found."
+
+            print(f"✅ get_agents SUCCESS: {len(agents)} agents found")
+            return result
+
+    except httpx.HTTPStatusError as e:
+        error_msg = f"HTTP {e.response.status_code}: {e.response.text}"
+        print(f"❌ get_agents ERROR: {error_msg}")
+        if e.response.status_code >= 500:
+            raise ModelRetry(f"Server error fetching agents: {e.response.status_code}")
+        return f"Error fetching agents: {error_msg}"
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ get_agents EXCEPTION: {error_msg}")
+        return f"Tool execution failed: {error_msg}"
+
+
+@chat_agent.tool
+async def get_agent_details(ctx: RunContext[str], agent_id: int) -> str:
+    """
+    Get detailed information about a specific agent including prompts, tools, and capabilities.
+
+    Use this when user asks about an agent's abilities, capabilities, or what it does.
+
+    Args:
+        agent_id: ID of the agent to get details for
+
+    Returns:
+        Formatted string with agent details
+    """
+    session_id = ctx.deps
+
+    print(f"\n{'='*80}")
+    print(f"🔧 TOOL: get_agent_details")
+    print(f"   Session ID: {session_id}")
+    print(f"   Agent ID: {agent_id}")
+    print(f"{'='*80}\n")
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            url = f"{DJANGO_API_BASE}/api/builder-tools/get_agent_details/"
+            params = {"session_id": session_id, "agent_id": agent_id}
+
+            response = await client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+
+            # Format detailed response
+            result = f"Agent: {data['name']} (ID: {agent_id})\n"
+            result += f"Type: {data.get('return_type', 'unstructured')}\n"
+
+            if data.get('description'):
+                result += f"Description: {data['description']}\n"
+
+            # Prompts
+            prompts = data.get('prompts', [])
+            if prompts:
+                result += f"\nPrompts ({len(prompts)}):\n"
+                for p in prompts:
+                    prompt_content = p.get('content', '')
+                    # Truncate long prompts
+                    if len(prompt_content) > 200:
+                        prompt_content = prompt_content[:200] + "..."
+                    result += f"  • {p.get('prompt_type', 'unknown')}: {prompt_content}\n"
+
+            # Tools
+            agent_tools = data.get('agent_tools', [])
+            if agent_tools:
+                result += f"\nTools ({len(agent_tools)}):\n"
+                for t in agent_tools:
+                    tool_name = t.get('tool_name', 'unknown')
+                    tool_type = t.get('tool_type', 'unknown')
+                    result += f"  • {tool_name} ({tool_type})\n"
+
+            # MCP Servers
+            mcp_servers = data.get('mcp_servers', [])
+            if mcp_servers:
+                result += f"\nMCP Servers ({len(mcp_servers)}):\n"
+                for mcp in mcp_servers:
+                    result += f"  • {mcp.get('name', 'unknown')}\n"
+
+            # Internal Tools
+            internal_tools = data.get('internal_tools', [])
+            if internal_tools:
+                result += f"\nInternal Tools ({len(internal_tools)}):\n"
+                for it in internal_tools:
+                    result += f"  • {it.get('name', 'unknown')} - {it.get('description', '')}\n"
+
+            # Input placeholders
+            input_placeholders = data.get('input_placeholders', [])
+            if input_placeholders:
+                result += f"\nRequired inputs: {', '.join(input_placeholders)}\n"
+
+            # Schema definition for structured agents
+            schema_def = data.get('schema_definition')
+            if schema_def:
+                result += f"\nOutput Schema: {schema_def}\n"
+
+            print(f"✅ get_agent_details SUCCESS: Retrieved details for agent {agent_id}")
+            return result
+
+    except httpx.HTTPStatusError as e:
+        error_msg = f"HTTP {e.response.status_code}: {e.response.text}"
+        print(f"❌ get_agent_details ERROR: {error_msg}")
+        if e.response.status_code >= 500:
+            raise ModelRetry(f"Server error fetching agent details: {e.response.status_code}")
+        return f"Error fetching agent details: {error_msg}"
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ get_agent_details EXCEPTION: {error_msg}")
+        return f"Tool execution failed: {error_msg}"
+
+
+@chat_agent.tool
+async def inspect_database_schema(ctx: RunContext[str], credential_id: int) -> str:
+    """
+    Inspect database schema for a credential.
+
+    Args:
+        credential_id: ID of the database credential
+
+    Returns:
+        Formatted string with schema information
+    """
+    session_id = ctx.deps
+
+    print(f"\n{'='*80}")
+    print(f"🔧 TOOL: inspect_database_schema")
+    print(f"   Session ID: {session_id}")
+    print(f"   Credential ID: {credential_id}")
+    print(f"{'='*80}\n")
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            url = f"{DJANGO_API_BASE}/api/builder-tools/inspect_schema/"
+            json_body = {"credential_id": credential_id, "session_id": session_id}
+
+            response = await client.post(url, json=json_body)
+            response.raise_for_status()
+            data = response.json()
+
+            # Format schema info
+            tables = data.get("metadata", {}).get("tables", [])
+            table_info = []
+            for table in tables[:5]:  # Show first 5 tables
+                table_name = table.get("name", "unknown")
+                columns = table.get("columns", [])
+                col_list = ", ".join(c.get("name", "?") for c in columns[:5])
+                if len(columns) > 5:
+                    col_list += f" ... ({len(columns)} total)"
+                table_info.append(f"  • {table_name}: {col_list}")
+
+            table_summary = "\n".join(table_info)
+            if len(tables) > 5:
+                table_summary += f"\n  ... and {len(tables) - 5} more tables"
+
+            result = (
+                f"Database: {data['credential_name']} ({data['database_type']})\n"
+                f"Tables ({len(tables)} total):\n{table_summary}\n"
+                f"Use credential_id={credential_id} in database node config."
+            )
+
+            print(f"✅ inspect_database_schema SUCCESS: {len(tables)} tables found")
+            return result
+
+    except httpx.HTTPStatusError as e:
+        error_msg = f"HTTP {e.response.status_code}: {e.response.text}"
+        print(f"❌ inspect_database_schema ERROR: {error_msg}")
+        if e.response.status_code >= 500:
+            raise ModelRetry(f"Server error inspecting schema: {e.response.status_code}")
+        return f"Error inspecting schema: {error_msg}"
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ inspect_database_schema EXCEPTION: {error_msg}")
+        return f"Tool execution failed: {error_msg}"
+
+
+@chat_agent.tool
+async def query_database(ctx: RunContext[str], credential_id: int, query: str) -> str:
+    """
+    Execute a SQL query to analyze data.
+
+    Query is automatically limited to 1 row for safety.
+
+    Args:
+        credential_id: ID of the database credential
+        query: SQL query to execute
+
+    Returns:
+        Formatted string with query results
+    """
+    session_id = ctx.deps
+
+    print(f"\n{'='*80}")
+    print(f"🔧 TOOL: query_database")
+    print(f"   Session ID: {session_id}")
+    print(f"   Credential ID: {credential_id}")
+    print(f"   Query: {query[:100]}...")
+    print(f"{'='*80}\n")
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            url = f"{DJANGO_API_BASE}/api/builder-tools/test_query/"
+            json_body = {
+                "credential_id": credential_id,
+                "query": query,
+                "session_id": session_id
+            }
+
+            response = await client.post(url, json=json_body)
+            response.raise_for_status()
+            data = response.json()
+
+            # Format result
+            columns = data.get("columns", [])
+            rows = data.get("data", [])
+            row_count = data.get("row_count", 0)
+
+            result = f"Query executed: {row_count} row(s), {len(columns)} column(s)\n"
+            if columns:
+                result += f"Columns: {', '.join(columns)}\n"
+            if rows:
+                result += f"Sample data: {rows[0]}"
+
+            print(f"✅ query_database SUCCESS: {row_count} rows returned")
+            return result
+
+    except httpx.HTTPStatusError as e:
+        error_msg = f"HTTP {e.response.status_code}: {e.response.text}"
+        print(f"❌ query_database ERROR: {error_msg}")
+        if e.response.status_code >= 500:
+            raise ModelRetry(f"Server error executing query: {e.response.status_code}")
+        return f"Error executing query: {error_msg}"
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ query_database EXCEPTION: {error_msg}")
+        return f"Tool execution failed: {error_msg}"
 
 
 # ============================================================================
@@ -532,7 +923,8 @@ async def generate_chat(body: GenerateRequest) -> StreamingResponse:
         print(f"   Loaded {len(messages)} messages from history")
 
         # Run chat agent with structured output (using augmented prompt with workflow context)
-        result = await chat_agent.run(augmented_prompt, message_history=messages)
+        # Pass session_id as deps for tool access
+        result = await chat_agent.run(augmented_prompt, message_history=messages, deps=session_id)
         output = result.output
 
         # Determine output type and stream appropriate response

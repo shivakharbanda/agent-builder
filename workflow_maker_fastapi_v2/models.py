@@ -5,6 +5,7 @@ These models define the union output type for the agent,
 allowing it to return either conversational responses or workflow actions.
 """
 
+from typing import List
 from pydantic import BaseModel, Field
 
 
@@ -130,3 +131,79 @@ class EdgeRemoveAction(BaseModel):
     message: str = Field(
         description="Confirmation message to display to user"
     )
+
+
+# ============================================================================
+# Tool Result Models (for Django API tools)
+# ============================================================================
+
+class CredentialInfo(BaseModel):
+    """
+    Database credential information from Django API.
+
+    Used by get_credentials tool.
+    """
+    id: int = Field(description="Credential ID")
+    name: str = Field(description="Credential name")
+    credential_type_name: str = Field(description="Type of credential (e.g., PostgreSQL, MySQL)")
+    description: str | None = Field(default=None, description="Credential description")
+    credential_type_category: str | None = Field(default=None, description="Category (e.g., RDBMS)")
+    details_count: int | None = Field(default=None, description="Number of connection details")
+    created_at: str | None = Field(default=None, description="Creation timestamp")
+    is_active: bool | None = Field(default=None, description="Active status")
+
+
+class AgentInfo(BaseModel):
+    """
+    AI agent information from Django API.
+
+    Used by get_agents tool.
+    """
+    id: int = Field(description="Agent ID")
+    name: str = Field(description="Agent name")
+    description: str | None = Field(default=None, description="Agent description")
+    return_type: str | None = Field(default=None, description="Return type (str, int, dict, etc.)")
+    project_name: str | None = Field(default=None, description="Project name")
+    prompts_count: int | None = Field(default=None, description="Number of prompts")
+    tools_count: int | None = Field(default=None, description="Number of tools")
+    created_at: str | None = Field(default=None, description="Creation timestamp")
+    is_active: bool | None = Field(default=None, description="Active status")
+
+
+class SchemaInspectionResult(BaseModel):
+    """
+    Database schema inspection result from Django API.
+
+    Used by inspect_database_schema tool.
+    """
+    credential_id: int = Field(description="Credential ID")
+    credential_name: str = Field(description="Credential name")
+    database_type: str = Field(description="Database type (postgres, mysql, etc.)")
+    metadata: dict = Field(description="Schema metadata with tables, columns, sample data")
+
+
+class DatabaseQueryResult(BaseModel):
+    """
+    Database query execution result from Django API.
+
+    Used by query_database tool.
+    """
+    columns: List[str] = Field(description="Column names")
+    data: List[dict] = Field(description="Query result rows")
+    row_count: int = Field(description="Number of rows returned")
+
+
+class AgentDetailInfo(BaseModel):
+    """
+    Detailed agent information from Django API.
+
+    Used by get_agent_details tool to provide comprehensive agent capabilities.
+    """
+    id: int = Field(description="Agent ID")
+    name: str = Field(description="Agent name")
+    description: str | None = Field(default=None, description="Agent description")
+    return_type: str | None = Field(default=None, description="Return type (structured/unstructured)")
+    prompts: List[dict] = Field(default_factory=list, description="List of prompt objects")
+    agent_tools: List[dict] = Field(default_factory=list, description="List of tool objects")
+    input_placeholders: List[str] | None = Field(default=None, description="Required input placeholders")
+    schema_definition: dict | None = Field(default=None, description="Schema definition for structured agents")
