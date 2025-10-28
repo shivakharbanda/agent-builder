@@ -587,6 +587,7 @@ export default function CreateWorkflow() {
                   onWorkflowConfigComplete={handleWorkflowConfigComplete}
                   onAIAction={handleAIAction}
                   projectId={projectId || 1}
+                  currentWorkflow={workflowConfig}
                 />
               </div>
             )}

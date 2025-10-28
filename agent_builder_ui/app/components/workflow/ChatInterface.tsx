@@ -16,9 +16,10 @@ interface ChatInterfaceProps {
   onWorkflowConfigComplete?: (config: any) => void;
   onAIAction?: (structuredResponse: any) => void;
   projectId?: number;
+  currentWorkflow?: any; // Current workflow state from canvas
 }
 
-export function ChatInterface({ onCommand, onWorkflowConfigComplete, onAIAction, projectId = 1 }: ChatInterfaceProps) {
+export function ChatInterface({ onCommand, onWorkflowConfigComplete, onAIAction, projectId = 1, currentWorkflow }: ChatInterfaceProps) {
   const { session, createSession, sendMessage: sendWorkflowMessage, checkFinalization } = useWorkflowBuilder({
     onAIAction
   });
@@ -104,7 +105,8 @@ export function ChatInterface({ onCommand, onWorkflowConfigComplete, onAIAction,
     onCommand?.(prompt);
 
     try {
-      await sendWorkflowMessage(prompt);
+      // Pass current workflow state from canvas to sendMessage
+      await sendWorkflowMessage(prompt, currentWorkflow);
 
       // Check if configuration is complete
       await checkFinalization();

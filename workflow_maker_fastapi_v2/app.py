@@ -121,6 +121,7 @@ TOOL USAGE GUIDELINES:
 - ALWAYS call get_credentials(search="") and get_agents(search="") with EMPTY search=""
 - This returns ALL available resources for finding exact matches
 - When user asks "what agents?" → Call get_agents() → Return friendly list in ConversationalResponse
+- When user asks "what tools?" or "what tools do we have?" → Call get_internal_tools() AND get_mcp_servers() → Return categorized list in ConversationalResponse
 - When user asks about SPECIFIC agent abilities/capabilities → Call get_agent_details(agent_id) → Return detailed info
 - Use inspect_database_schema() to get actual table/column names for SQL queries
 - Use query_database() sparingly - only to validate or understand data patterns
@@ -340,6 +341,93 @@ Examples:
 
   User: "what does the text classifier do?"
   You: [Call get_agents()] → Parse JSON to find id → [Call get_agent_details(id)] → Return detailed info
+
+TOOL LISTING QUERIES:
+When user asks about available tools:
+1. Call get_internal_tools(search="") to get built-in tools (SerpAPI, database tools, etc.)
+2. Call get_mcp_servers(search="") to get external MCP servers and their tools
+3. Parse both JSON responses
+4. Return ConversationalResponse with categorized, friendly list of tools
+
+Examples:
+  User: "what tools do we have?"
+  You: [Call get_internal_tools() AND get_mcp_servers()] → Parse both JSON responses → Return formatted list like:
+    "📦 Internal Tools (3):
+     - SerpAPI (Web search tool, requires API credential)
+     - Database Query (Execute SQL queries)
+     - Text Analysis (NLP processing)
+
+     🌐 MCP Servers (2):
+     - GitHub Server (15 tools for repo management)
+     - Slack Server (8 tools for messaging)"
+
+  User: "what internal tools are there?"
+  You: [Call get_internal_tools()] → Parse JSON → Return friendly list of internal tools only
+
+  User: "show me MCP servers"
+  You: [Call get_mcp_servers()] → Parse JSON → Return friendly list of MCP servers
+
+TOOLBOX NODE UPDATE EXAMPLES:
+
+When user says "configure toolbox with [tool name] using [credential name]":
+1. Call get_internal_tools(search="tool name") to find the tool
+2. Parse JSON response to extract tool_id
+3. Call get_credentials(search="credential name") to find the credential
+4. Parse JSON response to extract credential_id
+5. Return ToolboxNodeUpdateAction with internal_tool_attachments
+
+Example 5: "configure toolbox with Database Toolset using call transcripts db credential"
+Workflow state: node "toolbox-1" (type: toolbox) exists
+Steps:
+  1. Call get_internal_tools(search="Database Toolset")
+  2. Tool returns JSON: [{"id": 3, "name": "Database Toolset", "requires_credential": true, "required_credential_type": "PostgreSQL"}]
+  3. Extract tool_id: 3
+  4. Call get_credentials(search="call transcripts", category="RDBMS")
+  5. Credential returns JSON: [{"id": 7, "name": "Call Transcripts DB", "credential_type_name": "PostgreSQL"}]
+  6. Extract credential_id: 7
+  7. Return ToolboxNodeUpdateAction
+Output: ToolboxNodeUpdateAction(
+    node_id="toolbox-1",
+    mcp_server_ids=None,
+    internal_tool_attachments=[InternalToolAttachment(tool_id=3, credential_id=7)],
+    message="✅ Configured toolbox-1 with Database Toolset using Call Transcripts DB credential"
+)
+
+Example 6: "add GitHub MCP server to toolbox"
+Workflow state: node "toolbox-1" (type: toolbox) exists
+Steps:
+  1. Call get_mcp_servers(search="GitHub")
+  2. Server returns JSON: [{"id": 2, "name": "GitHub Server", "tools_count": 15}]
+  3. Extract server_id: 2
+  4. Return ToolboxNodeUpdateAction
+Output: ToolboxNodeUpdateAction(
+    node_id="toolbox-1",
+    mcp_server_ids=[2],
+    internal_tool_attachments=None,
+    message="✅ Added GitHub Server (15 tools) to toolbox-1"
+)
+
+Example 7: "configure toolbox with SerpAPI tool using my api key"
+Workflow state: node "toolbox-1" (type: toolbox) exists
+Steps:
+  1. Call get_internal_tools(search="SerpAPI")
+  2. Extract tool_id
+  3. Call get_credentials(search="api key", category="API")
+  4. Extract credential_id
+  5. Return ToolboxNodeUpdateAction with internal_tool_attachments
+Output: ToolboxNodeUpdateAction(
+    node_id="toolbox-1",
+    mcp_server_ids=None,
+    internal_tool_attachments=[InternalToolAttachment(tool_id=1, credential_id=4)],
+    message="✅ Configured toolbox-1 with SerpAPI using API Key credential"
+)
+
+IMPORTANT FOR TOOLBOX CONFIGURATION:
+- Internal tools ALWAYS need credentials (internal_tool_attachments format)
+- MCP servers don't need credentials (mcp_server_ids format)
+- Both can be set in same ToolboxNodeUpdateAction
+- Parse JSON responses carefully to extract numeric IDs
+- Verify tool's required_credential_type matches credential's credential_type_name
 
 AVAILABLE NODE TYPES:
 - trigger_manual: Manual workflow trigger (button/API)
@@ -823,6 +911,135 @@ async def get_agent_details(ctx: RunContext[str], agent_id: int) -> str:
 
 
 @chat_agent.tool
+async def get_internal_tools(ctx: RunContext[str], search: str = "", category: str = "") -> str:
+    """
+    Get available internal tools (built-in tools like SerpAPI, database tools, etc.).
+
+    Use this when user asks "what tools?", "what internal tools?", or "what tools do we have?".
+
+    Args:
+        search: Optional search term to filter tools by name/description
+        category: Optional category filter (e.g., 'WEB', 'DATABASE', 'API')
+
+    Returns:
+        JSON string with list of internal tools
+    """
+    session_id = ctx.deps
+
+    print(f"\n{'='*80}")
+    print(f"🔧 TOOL: get_internal_tools")
+    print(f"   Session ID: {session_id}")
+    print(f"   Search: {search!r}")
+    print(f"   Category: {category!r}")
+    print(f"{'='*80}\n")
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            url = f"{DJANGO_API_BASE}/api/builder-tools/get_internal_tools/"
+            params = {"session_id": session_id, "search": search}
+            if category:
+                params["category"] = category
+
+            response = await client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+
+            print(f"✅ get_internal_tools SUCCESS: {len(data)} internal tools found")
+
+            if data:
+                # Return JSON array with context
+                tools_data = [
+                    {
+                        "id": t.get("id"),
+                        "name": t.get("name"),
+                        "description": t.get("description", ""),
+                        "category": t.get("category", ""),
+                        "tool_type": t.get("tool_type", ""),
+                        "requires_credential": t.get("requires_credential", False),
+                        "required_credential_type": t.get("required_credential_type_name", "")
+                    }
+                    for t in data
+                ]
+                result = f"Found {len(tools_data)} internal tools:\n{json.dumps(tools_data, indent=2)}"
+                return result
+            else:
+                return "No internal tools found."
+
+    except httpx.HTTPStatusError as e:
+        error_msg = f"HTTP {e.response.status_code}: {e.response.text}"
+        print(f"❌ get_internal_tools HTTP ERROR: {error_msg}")
+        if e.response.status_code >= 500:
+            raise ModelRetry(f"Server error fetching internal tools: {e.response.status_code}")
+        return json.dumps({"error": error_msg})
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ get_internal_tools EXCEPTION: {error_msg}")
+        return json.dumps({"error": error_msg})
+
+
+@chat_agent.tool
+async def get_mcp_servers(ctx: RunContext[str], search: str = "") -> str:
+    """
+    Get available MCP (Model Context Protocol) servers and their tools.
+
+    Use this when user asks "what MCP servers?", "what external tools?", or "what tools do we have?".
+
+    Args:
+        search: Optional search term to filter servers by name/description
+
+    Returns:
+        JSON string with list of MCP servers and their tool counts
+    """
+    session_id = ctx.deps
+
+    print(f"\n{'='*80}")
+    print(f"🔧 TOOL: get_mcp_servers")
+    print(f"   Session ID: {session_id}")
+    print(f"   Search: {search!r}")
+    print(f"{'='*80}\n")
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            url = f"{DJANGO_API_BASE}/api/builder-tools/get_mcp_servers/"
+            params = {"session_id": session_id, "search": search}
+
+            response = await client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+
+            print(f"✅ get_mcp_servers SUCCESS: {len(data)} MCP servers found")
+
+            if data:
+                # Return JSON array with context
+                servers_data = [
+                    {
+                        "id": s.get("id"),
+                        "name": s.get("name"),
+                        "description": s.get("description", ""),
+                        "url": s.get("url", ""),
+                        "tools_count": s.get("tools_count", 0),
+                        "is_healthy": s.get("is_healthy", False)
+                    }
+                    for s in data
+                ]
+                result = f"Found {len(servers_data)} MCP servers:\n{json.dumps(servers_data, indent=2)}"
+                return result
+            else:
+                return "No MCP servers found."
+
+    except httpx.HTTPStatusError as e:
+        error_msg = f"HTTP {e.response.status_code}: {e.response.text}"
+        print(f"❌ get_mcp_servers HTTP ERROR: {error_msg}")
+        if e.response.status_code >= 500:
+            raise ModelRetry(f"Server error fetching MCP servers: {e.response.status_code}")
+        return json.dumps({"error": error_msg})
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ get_mcp_servers EXCEPTION: {error_msg}")
+        return json.dumps({"error": error_msg})
+
+
+@chat_agent.tool
 async def inspect_database_schema(ctx: RunContext[str], credential_id: int) -> str:
     """
     Inspect database schema for a credential.
@@ -1128,13 +1345,36 @@ async def generate_chat(body: GenerateRequest) -> StreamingResponse:
     workflow_context = ""
     if current_workflow and current_workflow.get("nodes"):
         nodes = current_workflow["nodes"]
-        print(f"   Current workflow: {len(nodes)} nodes")
+        edges = current_workflow.get("edges", [])
+        print(f"   Current workflow: {len(nodes)} nodes, {len(edges)} edges")
 
         workflow_context = f"\n\nCURRENT WORKFLOW STATE:\n"
         workflow_context += f"Total nodes: {len(nodes)}\n"
         workflow_context += "Existing nodes:\n"
         for node in nodes:
             workflow_context += f"  - {node.get('id')} ({node.get('type')}) at x={node.get('position', {}).get('x', 0)}\n"
+
+        # Add edges information
+        if edges:
+            workflow_context += f"\nTotal edges: {len(edges)}\n"
+            workflow_context += "Existing edges:\n"
+            for edge in edges:
+                source = edge.get('source', 'unknown')
+                target = edge.get('target', 'unknown')
+                edge_id = edge.get('id', 'unknown')
+                target_handle = edge.get('targetHandle')
+                source_handle = edge.get('sourceHandle')
+
+                edge_desc = f"  - {source} → {target}"
+                if target_handle:
+                    edge_desc += f" (target: {target_handle})"
+                if source_handle:
+                    edge_desc += f" (source: {source_handle})"
+                edge_desc += f" [ID: {edge_id}]\n"
+                workflow_context += edge_desc
+        else:
+            workflow_context += "\nNo edges yet\n"
+
         workflow_context += f"\nNext node should be positioned at x={100 + (len(nodes) * 300)}, y=200\n"
     else:
         print(f"   Current workflow: empty (starting fresh)")
@@ -1283,8 +1523,14 @@ async def generate_chat(body: GenerateRequest) -> StreamingResponse:
                 print(f"   ✏️ Intent: TOOLBOX_NODE_UPDATE ({output.node_id})")
                 # Build config_updates from non-None fields
                 config_updates = {}
-                if output.tool_ids is not None:
-                    config_updates["tool_ids"] = output.tool_ids
+                if output.mcp_server_ids is not None:
+                    config_updates["mcp_server_ids"] = output.mcp_server_ids
+                if output.internal_tool_attachments is not None:
+                    # Convert InternalToolAttachment objects to dict format for frontend
+                    config_updates["internal_tool_attachments"] = [
+                        {"tool_id": att.tool_id, "credential_id": att.credential_id}
+                        for att in output.internal_tool_attachments
+                    ]
                 print(f"      Config updates: {config_updates}")
 
                 yield json.dumps({
@@ -1315,21 +1561,31 @@ async def generate_chat(body: GenerateRequest) -> StreamingResponse:
             elif isinstance(output, EdgeRemoveAction):
                 # Edge remove action
                 print(f"   ✂️ Intent: EDGE_REMOVE ({output.source_node_id} → {output.target_node_id})")
+                print(f"      Looking for edge with:")
+                print(f"        source_handle: {repr(output.source_handle)}")
+                print(f"        target_handle: {repr(output.target_handle)}")
 
                 # Find the actual edge in current workflow state
                 edge_id = None
                 if current_workflow and current_workflow.get("edges"):
                     edges = current_workflow["edges"]
+                    print(f"      Searching through {len(edges)} edges...")
                     for edge in edges:
+                        print(f"      Checking edge: {edge.get('source')} → {edge.get('target')}")
+                        print(f"        edge.sourceHandle: {repr(edge.get('sourceHandle'))}")
+                        print(f"        edge.targetHandle: {repr(edge.get('targetHandle'))}")
+
                         # Match by source, target, and handles
                         source_match = edge.get("source") == output.source_node_id
                         target_match = edge.get("target") == output.target_node_id
                         source_handle_match = edge.get("sourceHandle") == output.source_handle
                         target_handle_match = edge.get("targetHandle") == output.target_handle
 
+                        print(f"        Matches: source={source_match}, target={target_match}, source_handle={source_handle_match}, target_handle={target_handle_match}")
+
                         if source_match and target_match and source_handle_match and target_handle_match:
                             edge_id = edge.get("id")
-                            print(f"      Found edge to remove: {edge_id}")
+                            print(f"      ✅ Found edge to remove: {edge_id}")
                             break
 
                 if edge_id:

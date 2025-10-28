@@ -1178,6 +1178,115 @@ class WorkflowBuilderToolsViewSet(viewsets.ViewSet):
         serializer = AgentSerializer(agent)
         return Response(serializer.data)
 
+    @action(detail=False, methods=['get'], url_path='get_internal_tools')
+    def get_internal_tools(self, request):
+        """
+        Tool: Get available internal tools (built-in tools like SerpAPI, database tools, etc.).
+
+        Query params:
+            - session_id: Optional workflow builder session ID (for FastAPI tools)
+            - search: Optional search term to filter by name/description
+            - category: Optional category filter (e.g., 'WEB', 'DATABASE', 'API')
+
+        Returns:
+            List of internal tools matching the criteria
+        """
+        from workflows.models import WorkflowBuilderSession
+        from agents.models import InternalTool
+        from agents.serializers import InternalToolListSerializer
+
+        search = request.query_params.get('search', '')
+        category = request.query_params.get('category', '')
+        session_id = request.query_params.get('session_id')
+
+        # Determine user: from session_id (FastAPI) or request.user (direct UI call)
+        if session_id:
+            try:
+                session = WorkflowBuilderSession.objects.get(
+                    session_id=session_id,
+                    is_active=True
+                )
+                user = session.created_by
+            except WorkflowBuilderSession.DoesNotExist:
+                return Response(
+                    {'error': f'Session {session_id} not found or expired'},
+                    status=404
+                )
+        else:
+            # Backward compatible: use request.user for direct UI calls
+            user = request.user
+
+        # Filter by active and enabled tools
+        tools = InternalTool.objects.filter(
+            is_active=True,
+            is_enabled=True
+        )
+
+        # Apply category filter if provided
+        if category:
+            tools = tools.filter(category=category)
+
+        # Apply search filter if provided
+        if search:
+            from django.db.models import Q
+            tools = tools.filter(
+                Q(name__icontains=search) | Q(description__icontains=search)
+            )
+
+        serializer = InternalToolListSerializer(tools, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path='get_mcp_servers')
+    def get_mcp_servers(self, request):
+        """
+        Tool: Get available MCP (Model Context Protocol) servers and their tools.
+
+        Query params:
+            - session_id: Optional workflow builder session ID (for FastAPI tools)
+            - search: Optional search term to filter by name/description
+
+        Returns:
+            List of MCP servers matching the criteria
+        """
+        from workflows.models import WorkflowBuilderSession
+        from agents.models import MCPServer
+        from agents.serializers import MCPServerListSerializer
+
+        search = request.query_params.get('search', '')
+        session_id = request.query_params.get('session_id')
+
+        # Determine user: from session_id (FastAPI) or request.user (direct UI call)
+        if session_id:
+            try:
+                session = WorkflowBuilderSession.objects.get(
+                    session_id=session_id,
+                    is_active=True
+                )
+                user = session.created_by
+            except WorkflowBuilderSession.DoesNotExist:
+                return Response(
+                    {'error': f'Session {session_id} not found or expired'},
+                    status=404
+                )
+        else:
+            # Backward compatible: use request.user for direct UI calls
+            user = request.user
+
+        # Filter by active servers
+        servers = MCPServer.objects.filter(
+            is_active=True
+        )
+
+        # Apply search filter if provided
+        if search:
+            from django.db.models import Q
+            servers = servers.filter(
+                Q(name__icontains=search) | Q(description__icontains=search)
+            )
+
+        serializer = MCPServerListSerializer(servers, many=True)
+        return Response(serializer.data)
+
     @action(detail=False, methods=['post'])
     def inspect_schema(self, request):
         """

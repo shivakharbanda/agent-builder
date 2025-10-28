@@ -79,7 +79,7 @@ export const useWorkflowBuilder = (options?: UseWorkflowBuilderOptions) => {
     }
   }, []);
 
-  const sendMessage = useCallback(async (message: string): Promise<void> => {
+  const sendMessage = useCallback(async (message: string, currentWorkflow?: any): Promise<void> => {
     if (!session.sessionId || session.isLoading) {
       throw new Error('No active session or already loading');
     }
@@ -99,6 +99,9 @@ export const useWorkflowBuilder = (options?: UseWorkflowBuilderOptions) => {
         messages: [...prev.messages, userMessage],
       }));
 
+      // Use provided currentWorkflow (from canvas) or fallback to session.finalConfig
+      const workflowState = currentWorkflow || session.finalConfig;
+
       // For streaming responses, use fetch
       const response = await fetch(`${WORKFLOW_BUILDER_CONFIG.BASE_URL}${WORKFLOW_BUILDER_CONFIG.GENERATE_ENDPOINT}`, {
         method: 'POST',
@@ -108,7 +111,7 @@ export const useWorkflowBuilder = (options?: UseWorkflowBuilderOptions) => {
         body: JSON.stringify({
           prompt: message,
           session_id: session.sessionId,
-          current_workflow: session.finalConfig, // Send current workflow state for context
+          current_workflow: workflowState, // Send current workflow state from canvas
         }),
       });
 
@@ -194,8 +197,29 @@ export const useWorkflowBuilder = (options?: UseWorkflowBuilderOptions) => {
                 // Extract edge data
                 const edgeData = data.data;
 
-                // Don't manually update finalConfig - let canvas be the source of truth
-                // Canvas will create the edge with proper ID and sync back via onConfigChange
+                // Create new edge for workflow
+                const newEdge = {
+                  id: `${edgeData.source_node_id}-${edgeData.target_node_id}-${Date.now()}`,
+                  source: edgeData.source_node_id,
+                  target: edgeData.target_node_id,
+                  sourceHandle: edgeData.source_handle,
+                  targetHandle: edgeData.target_handle
+                };
+
+                // Update workflow config
+                setSession(prev => {
+                  const currentNodes = prev.finalConfig?.nodes || [];
+                  const currentEdges = prev.finalConfig?.edges || [];
+
+                  return {
+                    ...prev,
+                    finalConfig: {
+                      nodes: currentNodes,
+                      edges: [...currentEdges, newEdge],
+                      metadata: prev.finalConfig?.metadata || {}
+                    }
+                  };
+                });
 
                 // Callback for imperative canvas updates
                 if (onAIAction) {

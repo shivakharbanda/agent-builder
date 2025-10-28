@@ -193,28 +193,43 @@ class DatabaseNodeUpdateAction(BaseModel):
             raise ValueError("At least one of credential_id or query must be set")
 
 
+class InternalToolAttachment(BaseModel):
+    """
+    Represents an internal tool with its associated credential.
+
+    Used in toolbox configuration to specify which tools to provide
+    to the agent along with the credentials needed to use them.
+    """
+    tool_id: int = Field(description="Internal tool ID (numeric)")
+    credential_id: int = Field(description="Credential ID for this tool (numeric)")
+
+
 class ToolboxNodeUpdateAction(BaseModel):
     """
     Action to update/configure an existing TOOLBOX node.
 
     Used when user requests to modify toolbox node configuration
-    (e.g., "add tools to toolbox").
+    (e.g., "configure toolbox with Database Toolset using postgres credential").
     """
     node_id: str = Field(
         description="Existing toolbox node identifier to update (use exact ID from workflow state)"
     )
-    tool_ids: list[int] | None = Field(
+    mcp_server_ids: list[int] | None = Field(
         default=None,
-        description="List of tool IDs to set in the toolbox"
+        description="List of MCP server IDs to add to toolbox (e.g., [1, 2, 3])"
+    )
+    internal_tool_attachments: list[InternalToolAttachment] | None = Field(
+        default=None,
+        description="List of internal tool attachments with credentials"
     )
     message: str = Field(
         description="Confirmation message to display to user"
     )
 
     def model_post_init(self, __context) -> None:
-        """Validate tool_ids is set"""
-        if self.tool_ids is None:
-            raise ValueError("tool_ids must be set for toolbox updates")
+        """Validate at least one field is set"""
+        if self.mcp_server_ids is None and self.internal_tool_attachments is None:
+            raise ValueError("At least one of mcp_server_ids or internal_tool_attachments must be set")
 
 
 # ============================================================================
